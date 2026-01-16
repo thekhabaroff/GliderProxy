@@ -24,7 +24,7 @@ spinner() {
     local pid=$1
     local delay=0.1
     local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+    while ps -p $pid > /dev/null 2>&1; do
         local temp=${spinstr#?}
         printf " [${CYAN}%c${NC}]  " "$spinstr"
         local spinstr=$temp${spinstr%"$temp"}
@@ -76,34 +76,10 @@ check_glider_installed() {
 # Получение текущей версии
 get_current_version() {
     if check_glider_installed; then
-        $BINARY_PATH -help 2>&1 | grep -o "glider [0-9.]*" | awk '{print $2}'
+        $BINARY_PATH -help 2>&1 | grep -o "glider [0-9.]*" | awk '{print $2}' || echo "0.16.4"
     else
         echo "не установлен"
     fi
-}
-
-# Получение списка пользователей в виде массива
-get_users_array() {
-    local -n arr=$1
-    local index=0
-    
-    if [ ! -f "$CONFIG_FILE" ]; then
-        return
-    fi
-    
-    while IFS= read -r line; do
-        if [[ $line =~ ^listen=mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
-            username="${BASH_REMATCH[1]}"
-            password="${BASH_REMATCH[2]}"
-            port="${BASH_REMATCH[3]}"
-            arr[$index]="$username|$password|$port"
-            ((index++))
-        elif [[ $line =~ ^listen=mixed://:([0-9]+) ]]; then
-            port="${BASH_REMATCH[1]}"
-            arr[$index]="noauth||$port"
-            ((index++))
-        fi
-    done < "$CONFIG_FILE"
 }
 
 # Красивое отображение списка пользователей
@@ -119,36 +95,44 @@ list_users() {
     echo ""
     
     local count=1
-    declare -a users
-    get_users_array users
+    local found=0
     
-    if [ ${#users[@]} -eq 0 ]; then
-        echo -e "${YELLOW}Пользователей не найдено${NC}"
-        return
-    fi
-    
-    for user_data in "${users[@]}"; do
-        IFS='|' read -r username password port <<< "$user_data"
-        
-        echo -e "${CYAN}[$count]${NC} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        if [ "$username" = "noauth" ]; then
-            echo -e "  ${BLUE}Порт без аутентификации:${NC} ${GREEN}$port${NC}"
-        else
+    while IFS= read -r line; do
+        if [[ $line =~ ^listen=mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+            username="${BASH_REMATCH[1]}"
+            password="${BASH_REMATCH[2]}"
+            port="${BASH_REMATCH[3]}"
+            
+            echo -e "${CYAN}[$count]${NC} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo -e "  ${BLUE}Логин:${NC}   ${GREEN}$username${NC}"
             echo -e "  ${BLUE}Пароль:${NC}  ${GREEN}$password${NC}"
             echo -e "  ${BLUE}Порт:${NC}    ${GREEN}$port${NC}"
             echo -e "  ${BLUE}HTTP:${NC}    http://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}"
             echo -e "  ${BLUE}SOCKS5:${NC}  socks5://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}"
+            echo ""
+            ((count++))
+            found=1
+        elif [[ $line =~ ^listen=mixed://:([0-9]+) ]]; then
+            port="${BASH_REMATCH[1]}"
+            
+            echo -e "${CYAN}[$count]${NC} ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo -e "  ${BLUE}Порт без аутентификации:${NC} ${GREEN}$port${NC}"
+            echo ""
+            ((count++))
+            found=1
         fi
-        ((count++))
-    done
-    echo ""
+    done < "$CONFIG_FILE"
+    
+    if [ $found -eq 0 ]; then
+        echo -e "${YELLOW}Пользователей не найдено${NC}"
+        echo ""
+    fi
 }
 
 # Проверка занятости порта
 check_port_used() {
     local port=$1
-    if grep -q ":${port}" $CONFIG_FILE 2>/dev/null; then
+    if [ -f "$CONFIG_FILE" ] && grep -q ":${port}\$" "$CONFIG_FILE" 2>/dev/null; then
         return 0
     else
         return 1
@@ -200,7 +184,7 @@ install_glider() {
     
     # Скачивание Glider
     cd /tmp
-    rm -rf glider_* glider.tar.gz 2>/dev/null || true
+    rm -rf glider_* glider.tar.gz glider.deb 2>/dev/null || true
     
     run_with_spinner "Скачивание Glider v${VERSION}..." wget -q "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.tar.gz" -O glider.tar.gz
     
@@ -218,11 +202,11 @@ install_glider() {
     if ! check_glider_installed; then
         echo -e "${RED}✗ Ошибка установки бинарного файла${NC}"
         read -p "Нажмите Enter для продолжения..."
-        exit 1
+        return
     fi
     
     # Создание конфигурации
-    run_with_spinner "Создание конфигурации..." bash -c "mkdir -p /etc/glider && cat > $CONFIG_FILE <<EOF
+    run_with_spinner "Создание конфигурации..." bash -c "mkdir -p /etc/glider && cat > $CONFIG_FILE <<'EOF'
 verbose=False
 
 # HTTP + SOCKS5 прокси
@@ -241,7 +225,7 @@ strategy=rr
 EOF"
     
     # Создание systemd службы
-    run_with_spinner "Создание systemd службы..." bash -c "cat > $SERVICE_FILE <<EOF
+    run_with_spinner "Создание systemd службы..." bash -c "cat > $SERVICE_FILE <<'EOF'
 [Unit]
 Description=Glider Proxy Server
 After=network.target
@@ -400,9 +384,29 @@ add_user() {
     echo -e "${CYAN}➤ Создание нового пользователя${NC}"
     echo ""
     read -p "Введите новый логин: " NEW_USER
+    
+    if [ -z "$NEW_USER" ]; then
+        echo -e "${RED}✗ Логин не может быть пустым${NC}"
+        sleep 2
+        return
+    fi
+    
     read -sp "Введите новый пароль: " NEW_PASS
     echo
+    
+    if [ -z "$NEW_PASS" ]; then
+        echo -e "${RED}✗ Пароль не может быть пустым${NC}"
+        sleep 2
+        return
+    fi
+    
     read -p "Введите порт для этого пользователя: " NEW_PORT
+    
+    if [ -z "$NEW_PORT" ]; then
+        echo -e "${RED}✗ Порт не может быть пустым${NC}"
+        sleep 2
+        return
+    fi
     
     # Проверка занятости порта
     if check_port_used "$NEW_PORT"; then
@@ -460,10 +464,13 @@ manage_users() {
     
     list_users
     
-    declare -a users
-    get_users_array users
+    # Подсчёт пользователей
+    local user_count=0
+    if [ -f "$CONFIG_FILE" ]; then
+        user_count=$(grep -c "^listen=" "$CONFIG_FILE" || echo "0")
+    fi
     
-    if [ ${#users[@]} -eq 0 ]; then
+    if [ "$user_count" -eq 0 ]; then
         echo ""
         read -p "Нажмите Enter для продолжения..."
         return
@@ -481,21 +488,31 @@ manage_users() {
             echo ""
             read -p "Введите номер пользователя для изменения: " user_num
             
-            if [ "$user_num" -lt 1 ] || [ "$user_num" -gt ${#users[@]} ]; then
+            if ! [[ "$user_num" =~ ^[0-9]+$ ]] || [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; then
                 echo -e "${RED}✗ Неверный номер${NC}"
-                sleep 1
+                sleep 2
                 return
             fi
             
-            user_data="${users[$((user_num-1))]}"
-            IFS='|' read -r old_username old_password old_port <<< "$user_data"
+            # Получаем данные пользователя
+            local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
+            
+            if [[ $line =~ ^listen=mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+                old_username="${BASH_REMATCH[1]}"
+                old_password="${BASH_REMATCH[2]}"
+                old_port="${BASH_REMATCH[3]}"
+            else
+                echo -e "${RED}✗ Ошибка чтения данных пользователя${NC}"
+                sleep 2
+                return
+            fi
             
             echo ""
             echo -e "${CYAN}➤ Изменение пользователя${NC}"
             echo ""
             read -p "Новый логин [$old_username]: " new_username
             new_username=${new_username:-$old_username}
-            read -sp "Новый пароль: " new_password
+            read -sp "Новый пароль [оставить текущий]: " new_password
             echo
             new_password=${new_password:-$old_password}
             read -p "Новый порт [$old_port]: " new_port
@@ -509,7 +526,7 @@ manage_users() {
             fi
             
             echo ""
-            run_with_spinner "Изменение пользователя..." sed -i "s|^listen=.*:${old_port}$|listen=mixed://${new_username}:${new_password}@:${new_port}|" $CONFIG_FILE
+            run_with_spinner "Изменение пользователя..." sed -i "s|^listen=.*:${old_port}\$|listen=mixed://${new_username}:${new_password}@:${new_port}|" $CONFIG_FILE
             run_with_spinner "Перезапуск службы..." systemctl restart glider
             
             sleep 2
@@ -527,16 +544,13 @@ manage_users() {
             echo ""
             read -p "Введите номер пользователя для удаления: " user_num
             
-            if [ "$user_num" -lt 1 ] || [ "$user_num" -gt ${#users[@]} ]; then
+            if ! [[ "$user_num" =~ ^[0-9]+$ ]] || [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; then
                 echo -e "${RED}✗ Неверный номер${NC}"
-                sleep 1
+                sleep 2
                 return
             fi
             
-            # Подсчёт количества listen строк
-            LISTEN_COUNT=$(grep -c "^listen=" $CONFIG_FILE)
-            
-            if [ "$LISTEN_COUNT" -le 1 ]; then
+            if [ "$user_count" -le 1 ]; then
                 echo ""
                 echo -e "${RED}✗ Нельзя удалить последнего пользователя!${NC}"
                 echo -e "${YELLOW}Используйте 'Удалить Glider' для полного удаления${NC}"
@@ -544,8 +558,22 @@ manage_users() {
                 return
             fi
             
-            user_data="${users[$((user_num-1))]}"
-            IFS='|' read -r username password port <<< "$user_data"
+            # Получаем данные пользователя
+            local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
+            
+            if [[ $line =~ :([0-9]+)$ ]]; then
+                port="${BASH_REMATCH[1]}"
+            else
+                echo -e "${RED}✗ Ошибка чтения порта${NC}"
+                sleep 2
+                return
+            fi
+            
+            if [[ $line =~ ^listen=mixed://([^:]+): ]]; then
+                username="${BASH_REMATCH[1]}"
+            else
+                username="noauth"
+            fi
             
             echo ""
             read -p "Удалить пользователя '$username' на порту $port? (y/n): " CONFIRM
@@ -554,7 +582,7 @@ manage_users() {
             fi
             
             echo ""
-            run_with_spinner "Удаление пользователя..." sed -i "/^listen=.*:${port}$/d" $CONFIG_FILE
+            run_with_spinner "Удаление пользователя..." sed -i "/^listen=.*:${port}\$/d" $CONFIG_FILE
             run_with_spinner "Перезапуск службы..." systemctl restart glider
             
             sleep 2
@@ -569,6 +597,12 @@ manage_users() {
             ;;
             
         3)
+            return
+            ;;
+            
+        *)
+            echo -e "${RED}✗ Неверный выбор${NC}"
+            sleep 1
             return
             ;;
     esac
