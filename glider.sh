@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Скрипт управления Glider Proxy Server
-# Использование: sudo bash glider_manager.sh
+# Использование: glider
 
 set -e
 
@@ -14,12 +14,12 @@ VERSION="0.16.4"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # Проверка root прав
 check_root() {
     if [ "$EUID" -ne 0 ]; then 
-        echo -e "${RED}Пожалуйста, запустите скрипт от root (sudo)${NC}"
+        echo -e "${RED}Пожалуйста, запустите скрипт от root (sudo glider)${NC}"
         exit 1
     fi
 }
@@ -70,21 +70,21 @@ install_glider() {
     
     # Установка зависимостей
     echo -e "${GREEN}Установка зависимостей...${NC}"
-    apt update
-    apt install curl wget tar -y
+    apt update > /dev/null 2>&1
+    apt install curl wget tar -y > /dev/null 2>&1
     
     # Скачивание Glider
     echo -e "${GREEN}Скачивание Glider v${VERSION}...${NC}"
     cd /tmp
-    rm -rf glider_* 2>/dev/null || true
+    rm -rf glider_* glider.tar.gz 2>/dev/null || true
     
-    wget "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.tar.gz" -O glider.tar.gz
+    wget -q "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.tar.gz" -O glider.tar.gz
     
     if [ $? -ne 0 ]; then
         echo -e "${RED}Ошибка скачивания. Попытка скачать deb пакет...${NC}"
-        wget "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.deb" -O glider.deb
-        dpkg -i glider.deb
-        apt --fix-broken install -y
+        wget -q "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.deb" -O glider.deb
+        dpkg -i glider.deb > /dev/null 2>&1
+        apt --fix-broken install -y > /dev/null 2>&1
     else
         tar -xzf glider.tar.gz
         find . -name "glider" -type f -exec cp {} $BINARY_PATH \;
@@ -102,7 +102,7 @@ install_glider() {
     mkdir -p /etc/glider
     
     cat > $CONFIG_FILE <<EOF
-verbose=True
+verbose=False
 
 # HTTP + SOCKS5 на одном порту
 listen=${LISTEN_STRING}
@@ -132,6 +132,8 @@ ExecStart=$BINARY_PATH -config $CONFIG_FILE
 Restart=on-failure
 RestartSec=5
 User=nobody
+StandardOutput=null
+StandardError=null
 
 [Install]
 WantedBy=multi-user.target
@@ -139,9 +141,9 @@ EOF
     
     # Запуск службы
     echo -e "${GREEN}Запуск службы...${NC}"
-    systemctl daemon-reload
-    systemctl enable glider
-    systemctl start glider
+    systemctl daemon-reload > /dev/null 2>&1
+    systemctl enable glider > /dev/null 2>&1
+    systemctl start glider > /dev/null 2>&1
     
     sleep 2
     
@@ -167,7 +169,6 @@ EOF
         
         echo ""
         echo "Управление: systemctl {start|stop|restart|status} glider"
-        echo "Логи: journalctl -u glider -f"
     else
         echo -e "${RED}=== ОШИБКА: служба не запустилась ===${NC}"
         echo "Проверьте логи: journalctl -u glider -n 50"
@@ -197,7 +198,7 @@ update_glider() {
     
     # Остановка службы
     echo -e "${GREEN}Остановка службы...${NC}"
-    systemctl stop glider
+    systemctl stop glider > /dev/null 2>&1
     
     # Резервная копия конфигурации
     cp $CONFIG_FILE /tmp/glider.conf.backup
@@ -207,7 +208,7 @@ update_glider() {
     cd /tmp
     rm -rf glider_* glider.tar.gz 2>/dev/null || true
     
-    wget "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.tar.gz" -O glider.tar.gz
+    wget -q "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.tar.gz" -O glider.tar.gz
     
     if [ $? -eq 0 ]; then
         tar -xzf glider.tar.gz
@@ -215,7 +216,7 @@ update_glider() {
         chmod +x $BINARY_PATH
     else
         echo -e "${RED}Ошибка скачивания${NC}"
-        systemctl start glider
+        systemctl start glider > /dev/null 2>&1
         read -p "Нажмите Enter для продолжения..."
         return
     fi
@@ -224,7 +225,7 @@ update_glider() {
     cp /tmp/glider.conf.backup $CONFIG_FILE
     
     # Запуск службы
-    systemctl start glider
+    systemctl start glider > /dev/null 2>&1
     
     if systemctl is-active --quiet glider; then
         echo -e "${GREEN}Обновление завершено успешно!${NC}"
@@ -270,7 +271,7 @@ add_user() {
         sed -i "s|listen=mixed://:${CURRENT_PORT}|listen=mixed://${NEW_USER}:${NEW_PASS}@:${CURRENT_PORT}|" $CONFIG_FILE
     fi
     
-    systemctl restart glider
+    systemctl restart glider > /dev/null 2>&1
     
     if systemctl is-active --quiet glider; then
         echo -e "${GREEN}Пользователь добавлен успешно!${NC}"
@@ -301,15 +302,15 @@ remove_glider() {
     fi
     
     echo -e "${GREEN}Остановка службы...${NC}"
-    systemctl stop glider
-    systemctl disable glider
+    systemctl stop glider > /dev/null 2>&1
+    systemctl disable glider > /dev/null 2>&1
     
     echo -e "${GREEN}Удаление файлов...${NC}"
     rm -f $BINARY_PATH
     rm -f $SERVICE_FILE
     rm -rf /etc/glider
     
-    systemctl daemon-reload
+    systemctl daemon-reload > /dev/null 2>&1
     
     echo -e "${GREEN}Glider успешно удалён!${NC}"
     read -p "Нажмите Enter для продолжения..."
@@ -319,7 +320,7 @@ remove_glider() {
 show_menu() {
     clear
     echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║   Управление Glider Proxy Server       ║${NC}"
+    echo -e "${GREEN}║   Управление Glider Proxy Server      ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
     echo ""
     
