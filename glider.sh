@@ -7,7 +7,9 @@ set -e
 
 CONFIG_FILE="/etc/glider/glider.conf"
 SERVICE_FILE="/etc/systemd/system/glider.service"
-BINARY_PATH="/usr/local/bin/glider"
+BINARY_PATH="/usr/local/bin/glider-bin"
+SCRIPT_PATH="/usr/local/bin/glider-manager"
+SCRIPT_URL="https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh"
 VERSION="0.16.4"
 
 # Цвета для вывода
@@ -89,11 +91,6 @@ list_users() {
         return
     fi
     
-    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║        СПИСОК ПОЛЬЗОВАТЕЛЕЙ            ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
-    echo ""
-    
     local count=1
     local found=0
     
@@ -136,6 +133,57 @@ check_port_used() {
         return 0
     else
         return 1
+    fi
+}
+
+# Обновление скрипта
+update_script() {
+    clear
+    echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║         ОБНОВЛЕНИЕ СКРИПТА             ║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    echo -e "${YELLOW}⚠ Будет загружена последняя версия скрипта${NC}"
+    echo ""
+    read -p "Продолжить обновление? (y/n): " CONFIRM
+    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+        return
+    fi
+    
+    echo ""
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    
+    # Создаём резервную копию
+    run_with_spinner "Создание резервной копии..." cp $SCRIPT_PATH ${SCRIPT_PATH}.backup
+    
+    # Скачиваем новую версию
+    run_with_spinner "Скачивание новой версии..." wget -q "$SCRIPT_URL" -O ${SCRIPT_PATH}.new
+    
+    if [ $? -eq 0 ] && [ -s ${SCRIPT_PATH}.new ]; then
+        run_with_spinner "Установка новой версии..." bash -c "mv ${SCRIPT_PATH}.new $SCRIPT_PATH && chmod +x $SCRIPT_PATH"
+        
+        echo ""
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${GREEN}✓ Скрипт успешно обновлён!${NC}"
+        echo ""
+        echo -e "${YELLOW}Перезапуск скрипта...${NC}"
+        sleep 2
+        exec "$SCRIPT_PATH"
+    else
+        echo ""
+        echo -e "${RED}✗ Ошибка скачивания новой версии${NC}"
+        
+        # Восстанавливаем из резервной копии
+        if [ -f ${SCRIPT_PATH}.backup ]; then
+            run_with_spinner "Восстановление из резервной копии..." mv ${SCRIPT_PATH}.backup $SCRIPT_PATH
+        fi
+        
+        rm -f ${SCRIPT_PATH}.new 2>/dev/null
+        
+        echo ""
+        read -p "Нажмите Enter для продолжения..."
     fi
 }
 
@@ -191,11 +239,11 @@ install_glider() {
     if [ $? -ne 0 ]; then
         echo -e "${YELLOW}Попытка альтернативного метода...${NC}"
         run_with_spinner "Скачивание deb пакета..." wget -q "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.deb" -O glider.deb
-        run_with_spinner "Установка deb пакета..." dpkg -i glider.deb
+        run_with_spinner "Установка deb пакета..." bash -c "dpkg -i glider.deb && mv /usr/bin/glider $BINARY_PATH 2>/dev/null || true"
         run_with_spinner "Исправление зависимостей..." apt --fix-broken install -y
     else
         run_with_spinner "Распаковка архива..." tar -xzf glider.tar.gz
-        run_with_spinner "Установка бинарного файла..." bash -c 'find . -name "glider" -type f -exec cp {} /usr/local/bin/glider \; && chmod +x /usr/local/bin/glider'
+        run_with_spinner "Установка бинарного файла..." bash -c "find . -name 'glider' -type f -exec cp {} $BINARY_PATH \; && chmod +x $BINARY_PATH"
     fi
     
     # Проверка установки
@@ -206,7 +254,8 @@ install_glider() {
     fi
     
     # Создание конфигурации
-    run_with_spinner "Создание конфигурации..." bash -c "mkdir -p /etc/glider && cat > $CONFIG_FILE <<'EOF'
+    mkdir -p /etc/glider
+    cat > $CONFIG_FILE <<EOF
 verbose=False
 
 # HTTP + SOCKS5 прокси
@@ -222,10 +271,12 @@ checktimeout=10
 
 # Стратегия
 strategy=rr
-EOF"
+EOF
+    
+    run_with_spinner "Создание конфигурации..." sleep 0.5
     
     # Создание systemd службы
-    run_with_spinner "Создание systemd службы..." bash -c "cat > $SERVICE_FILE <<'EOF'
+    cat > $SERVICE_FILE <<EOF
 [Unit]
 Description=Glider Proxy Server
 After=network.target
@@ -241,7 +292,9 @@ StandardError=null
 
 [Install]
 WantedBy=multi-user.target
-EOF"
+EOF
+    
+    run_with_spinner "Создание systemd службы..." sleep 0.5
     
     # Запуск службы
     run_with_spinner "Перезагрузка systemd..." systemctl daemon-reload
@@ -337,7 +390,7 @@ update_glider() {
     
     if [ $? -eq 0 ]; then
         run_with_spinner "Распаковка архива..." tar -xzf glider.tar.gz
-        run_with_spinner "Установка бинарного файла..." bash -c 'find . -name "glider" -type f -exec cp {} /usr/local/bin/glider \; && chmod +x /usr/local/bin/glider'
+        run_with_spinner "Установка бинарного файла..." bash -c "find . -name 'glider' -type f -exec cp {} $BINARY_PATH \; && chmod +x $BINARY_PATH"
     else
         echo -e "${RED}✗ Ошибка скачивания${NC}"
         systemctl start glider > /dev/null 2>&1
@@ -364,251 +417,245 @@ update_glider() {
     read -p "Нажмите Enter для продолжения..."
 }
 
-# Добавление пользователя
-add_user() {
-    clear
-    echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║        ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯ         ║${NC}"
-    echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
-    echo ""
-    
-    if ! check_glider_installed; then
-        echo -e "${YELLOW}⚠ Glider не установлен${NC}"
-        echo ""
-        read -p "Нажмите Enter для продолжения..."
-        return
-    fi
-    
-    list_users
-    
-    echo -e "${CYAN}➤ Создание нового пользователя${NC}"
-    echo ""
-    read -p "Введите новый логин: " NEW_USER
-    
-    if [ -z "$NEW_USER" ]; then
-        echo -e "${RED}✗ Логин не может быть пустым${NC}"
-        sleep 2
-        return
-    fi
-    
-    read -sp "Введите новый пароль: " NEW_PASS
-    echo
-    
-    if [ -z "$NEW_PASS" ]; then
-        echo -e "${RED}✗ Пароль не может быть пустым${NC}"
-        sleep 2
-        return
-    fi
-    
-    read -p "Введите порт для этого пользователя: " NEW_PORT
-    
-    if [ -z "$NEW_PORT" ]; then
-        echo -e "${RED}✗ Порт не может быть пустым${NC}"
-        sleep 2
-        return
-    fi
-    
-    # Проверка занятости порта
-    if check_port_used "$NEW_PORT"; then
-        echo ""
-        echo -e "${RED}✗ Порт $NEW_PORT уже используется!${NC}"
-        echo ""
-        read -p "Нажмите Enter для продолжения..."
-        return
-    fi
-    
-    echo ""
-    run_with_spinner "Добавление пользователя..." sed -i "/^# HTTP + SOCKS5 прокси/a listen=mixed://${NEW_USER}:${NEW_PASS}@:${NEW_PORT}" $CONFIG_FILE
-    run_with_spinner "Перезапуск службы..." systemctl restart glider
-    
-    sleep 2
-    
-    echo ""
-    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
-    if systemctl is-active --quiet glider; then
-        echo -e "${GREEN}✓ Пользователь добавлен успешно!${NC}"
-        echo ""
-        echo -e "${BLUE}Логин:${NC}   ${GREEN}$NEW_USER${NC}"
-        echo -e "${BLUE}Пароль:${NC}  ${GREEN}$NEW_PASS${NC}"
-        echo -e "${BLUE}Порт:${NC}    ${GREEN}$NEW_PORT${NC}"
-        echo ""
-        echo -e "${CYAN}HTTP прокси:${NC}"
-        echo -e "  http://${NEW_USER}:${NEW_PASS}@$(hostname -I | awk '{print $1}'):${NEW_PORT}"
-        echo ""
-        echo -e "${CYAN}SOCKS5 прокси:${NC}"
-        echo -e "  socks5://${NEW_USER}:${NEW_PASS}@$(hostname -I | awk '{print $1}'):${NEW_PORT}"
-    else
-        echo -e "${RED}✗ Ошибка при добавлении пользователя${NC}"
-        echo -e "${YELLOW}Проверьте логи:${NC} journalctl -u glider -n 20"
-    fi
-    
-    echo ""
-    read -p "Нажмите Enter для продолжения..."
-}
-
 # Управление пользователями
 manage_users() {
-    clear
-    echo -e "${YELLOW}╔════════════════════════════════════════╗${NC}"
-    echo -e "${YELLOW}║       УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ        ║${NC}"
-    echo -e "${YELLOW}╚════════════════════════════════════════╝${NC}"
-    echo ""
-    
-    if ! check_glider_installed; then
-        echo -e "${YELLOW}⚠ Glider не установлен${NC}"
+    while true; do
+        clear
+        echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
+        echo -e "${BLUE}║        УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ       ║${NC}"
+        echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
         echo ""
-        read -p "Нажмите Enter для продолжения..."
-        return
-    fi
-    
-    list_users
-    
-    # Подсчёт пользователей
-    local user_count=0
-    if [ -f "$CONFIG_FILE" ]; then
-        user_count=$(grep -c "^listen=" "$CONFIG_FILE" || echo "0")
-    fi
-    
-    if [ "$user_count" -eq 0 ]; then
+        
+        if ! check_glider_installed; then
+            echo -e "${YELLOW}⚠ Glider не установлен${NC}"
+            echo ""
+            read -p "Нажмите Enter для продолжения..."
+            return
+        fi
+        
+        # Показываем список пользователей
+        list_users
+        
+        # Подсчёт пользователей
+        local user_count=0
+        if [ -f "$CONFIG_FILE" ]; then
+            user_count=$(grep -c "^listen=" "$CONFIG_FILE" 2>/dev/null || echo "0")
+        fi
+        
+        echo -e "${CYAN}┌────────────────────────────────────────┐${NC}"
+        echo -e "${CYAN}│${NC}  1. ${GREEN}Добавить пользователя${NC}"
+        echo -e "${CYAN}│${NC}  2. ${YELLOW}Изменить пользователя${NC}"
+        echo -e "${CYAN}│${NC}  3. ${RED}Удалить пользователя${NC}"
+        echo -e "${CYAN}│${NC}  4. ${MAGENTA}Назад${NC}"
+        echo -e "${CYAN}└────────────────────────────────────────┘${NC}"
         echo ""
-        read -p "Нажмите Enter для продолжения..."
-        return
-    fi
-    
-    echo -e "${CYAN}Выберите действие:${NC}"
-    echo "1. Изменить пользователя"
-    echo "2. Удалить пользователя"
-    echo "3. Назад"
-    echo ""
-    read -p "Выберите действие (1-3): " action
-    
-    case $action in
-        1)
-            echo ""
-            read -p "Введите номер пользователя для изменения: " user_num
-            
-            if ! [[ "$user_num" =~ ^[0-9]+$ ]] || [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; then
-                echo -e "${RED}✗ Неверный номер${NC}"
-                sleep 2
-                return
-            fi
-            
-            # Получаем данные пользователя
-            local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
-            
-            if [[ $line =~ ^listen=mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
-                old_username="${BASH_REMATCH[1]}"
-                old_password="${BASH_REMATCH[2]}"
-                old_port="${BASH_REMATCH[3]}"
-            else
-                echo -e "${RED}✗ Ошибка чтения данных пользователя${NC}"
-                sleep 2
-                return
-            fi
-            
-            echo ""
-            echo -e "${CYAN}➤ Изменение пользователя${NC}"
-            echo ""
-            read -p "Новый логин [$old_username]: " new_username
-            new_username=${new_username:-$old_username}
-            read -sp "Новый пароль [оставить текущий]: " new_password
-            echo
-            new_password=${new_password:-$old_password}
-            read -p "Новый порт [$old_port]: " new_port
-            new_port=${new_port:-$old_port}
-            
-            if [ "$new_port" != "$old_port" ] && check_port_used "$new_port"; then
+        read -p "$(echo -e ${CYAN}Выберите действие ${GREEN}[1-4]${CYAN}: ${NC})" action
+        
+        case $action in
+            1)
+                # Добавление пользователя
                 echo ""
-                echo -e "${RED}✗ Порт $new_port уже используется!${NC}"
+                echo -e "${CYAN}➤ Создание нового пользователя${NC}"
+                echo ""
+                read -p "Введите новый логин: " NEW_USER
+                
+                if [ -z "$NEW_USER" ]; then
+                    echo -e "${RED}✗ Логин не может быть пустым${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                read -sp "Введите новый пароль: " NEW_PASS
+                echo
+                
+                if [ -z "$NEW_PASS" ]; then
+                    echo -e "${RED}✗ Пароль не может быть пустым${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                read -p "Введите порт для этого пользователя: " NEW_PORT
+                
+                if [ -z "$NEW_PORT" ]; then
+                    echo -e "${RED}✗ Порт не может быть пустым${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                # Проверка занятости порта
+                if check_port_used "$NEW_PORT"; then
+                    echo ""
+                    echo -e "${RED}✗ Порт $NEW_PORT уже используется!${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                echo ""
+                run_with_spinner "Добавление пользователя..." sed -i "/^# HTTP + SOCKS5 прокси/a listen=mixed://${NEW_USER}:${NEW_PASS}@:${NEW_PORT}" $CONFIG_FILE
+                run_with_spinner "Перезапуск службы..." systemctl restart glider
+                
                 sleep 2
-                return
-            fi
-            
-            echo ""
-            run_with_spinner "Изменение пользователя..." sed -i "s|^listen=.*:${old_port}\$|listen=mixed://${new_username}:${new_password}@:${new_port}|" $CONFIG_FILE
-            run_with_spinner "Перезапуск службы..." systemctl restart glider
-            
-            sleep 2
-            
-            if systemctl is-active --quiet glider; then
+                
                 echo ""
-                echo -e "${GREEN}✓ Пользователь изменён успешно!${NC}"
-            else
+                if systemctl is-active --quiet glider; then
+                    echo -e "${GREEN}✓ Пользователь добавлен успешно!${NC}"
+                    echo ""
+                    echo -e "${BLUE}Логин:${NC}   ${GREEN}$NEW_USER${NC}"
+                    echo -e "${BLUE}Пароль:${NC}  ${GREEN}$NEW_PASS${NC}"
+                    echo -e "${BLUE}Порт:${NC}    ${GREEN}$NEW_PORT${NC}"
+                else
+                    echo -e "${RED}✗ Ошибка при добавлении пользователя${NC}"
+                fi
+                
                 echo ""
-                echo -e "${RED}✗ Ошибка при изменении${NC}"
-            fi
-            ;;
-            
-        2)
-            echo ""
-            read -p "Введите номер пользователя для удаления: " user_num
-            
-            if ! [[ "$user_num" =~ ^[0-9]+$ ]] || [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; then
-                echo -e "${RED}✗ Неверный номер${NC}"
+                read -p "Нажмите Enter для продолжения..."
+                ;;
+                
+            2)
+                # Изменение пользователя
+                if [ "$user_count" -eq 0 ]; then
+                    echo ""
+                    echo -e "${YELLOW}Нет пользователей для изменения${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                echo ""
+                read -p "Введите номер пользователя для изменения: " user_num
+                
+                if ! [[ "$user_num" =~ ^[0-9]+$ ]] || [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; then
+                    echo -e "${RED}✗ Неверный номер${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                # Получаем данные пользователя
+                local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
+                
+                if [[ $line =~ ^listen=mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+                    old_username="${BASH_REMATCH[1]}"
+                    old_password="${BASH_REMATCH[2]}"
+                    old_port="${BASH_REMATCH[3]}"
+                else
+                    echo -e "${RED}✗ Ошибка чтения данных пользователя${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                echo ""
+                echo -e "${CYAN}➤ Изменение пользователя${NC}"
+                echo ""
+                read -p "Новый логин [$old_username]: " new_username
+                new_username=${new_username:-$old_username}
+                read -sp "Новый пароль [оставить текущий]: " new_password
+                echo
+                new_password=${new_password:-$old_password}
+                read -p "Новый порт [$old_port]: " new_port
+                new_port=${new_port:-$old_port}
+                
+                if [ "$new_port" != "$old_port" ] && check_port_used "$new_port"; then
+                    echo ""
+                    echo -e "${RED}✗ Порт $new_port уже используется!${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                echo ""
+                run_with_spinner "Изменение пользователя..." sed -i "s|^listen=.*:${old_port}\$|listen=mixed://${new_username}:${new_password}@:${new_port}|" $CONFIG_FILE
+                run_with_spinner "Перезапуск службы..." systemctl restart glider
+                
                 sleep 2
-                return
-            fi
-            
-            if [ "$user_count" -le 1 ]; then
+                
+                if systemctl is-active --quiet glider; then
+                    echo ""
+                    echo -e "${GREEN}✓ Пользователь изменён успешно!${NC}"
+                else
+                    echo ""
+                    echo -e "${RED}✗ Ошибка при изменении${NC}"
+                fi
+                
                 echo ""
-                echo -e "${RED}✗ Нельзя удалить последнего пользователя!${NC}"
-                echo -e "${YELLOW}Используйте 'Удалить Glider' для полного удаления${NC}"
+                read -p "Нажмите Enter для продолжения..."
+                ;;
+                
+            3)
+                # Удаление пользователя
+                if [ "$user_count" -eq 0 ]; then
+                    echo ""
+                    echo -e "${YELLOW}Нет пользователей для удаления${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                if [ "$user_count" -le 1 ]; then
+                    echo ""
+                    echo -e "${RED}✗ Нельзя удалить последнего пользователя!${NC}"
+                    echo -e "${YELLOW}Используйте 'Удалить Glider' для полного удаления${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                echo ""
+                read -p "Введите номер пользователя для удаления: " user_num
+                
+                if ! [[ "$user_num" =~ ^[0-9]+$ ]] || [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; then
+                    echo -e "${RED}✗ Неверный номер${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                # Получаем данные пользователя
+                local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
+                
+                if [[ $line =~ :([0-9]+)$ ]]; then
+                    port="${BASH_REMATCH[1]}"
+                else
+                    echo -e "${RED}✗ Ошибка чтения порта${NC}"
+                    sleep 2
+                    continue
+                fi
+                
+                if [[ $line =~ ^listen=mixed://([^:]+): ]]; then
+                    username="${BASH_REMATCH[1]}"
+                else
+                    username="noauth"
+                fi
+                
+                echo ""
+                read -p "Удалить пользователя '$username' на порту $port? (y/n): " CONFIRM
+                if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+                    continue
+                fi
+                
+                echo ""
+                run_with_spinner "Удаление пользователя..." sed -i "/^listen=.*:${port}\$/d" $CONFIG_FILE
+                run_with_spinner "Перезапуск службы..." systemctl restart glider
+                
                 sleep 2
-                return
-            fi
-            
-            # Получаем данные пользователя
-            local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
-            
-            if [[ $line =~ :([0-9]+)$ ]]; then
-                port="${BASH_REMATCH[1]}"
-            else
-                echo -e "${RED}✗ Ошибка чтения порта${NC}"
-                sleep 2
-                return
-            fi
-            
-            if [[ $line =~ ^listen=mixed://([^:]+): ]]; then
-                username="${BASH_REMATCH[1]}"
-            else
-                username="noauth"
-            fi
-            
-            echo ""
-            read -p "Удалить пользователя '$username' на порту $port? (y/n): " CONFIRM
-            if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
-                return
-            fi
-            
-            echo ""
-            run_with_spinner "Удаление пользователя..." sed -i "/^listen=.*:${port}\$/d" $CONFIG_FILE
-            run_with_spinner "Перезапуск службы..." systemctl restart glider
-            
-            sleep 2
-            
-            if systemctl is-active --quiet glider; then
+                
+                if systemctl is-active --quiet glider; then
+                    echo ""
+                    echo -e "${GREEN}✓ Пользователь удалён!${NC}"
+                else
+                    echo ""
+                    echo -e "${RED}✗ Ошибка при удалении${NC}"
+                fi
+                
                 echo ""
-                echo -e "${GREEN}✓ Пользователь удалён!${NC}"
-            else
-                echo ""
-                echo -e "${RED}✗ Ошибка при удалении${NC}"
-            fi
-            ;;
-            
-        3)
-            return
-            ;;
-            
-        *)
-            echo -e "${RED}✗ Неверный выбор${NC}"
-            sleep 1
-            return
-            ;;
-    esac
-    
-    echo ""
-    read -p "Нажмите Enter для продолжения..."
+                read -p "Нажмите Enter для продолжения..."
+                ;;
+                
+            4)
+                # Назад
+                return
+                ;;
+                
+            *)
+                echo -e "${RED}✗ Неверный выбор${NC}"
+                sleep 1
+                ;;
+        esac
+    done
 }
 
 # Удаление Glider
@@ -668,23 +715,21 @@ show_menu() {
     echo -e "${CYAN}┌────────────────────────────────────────┐${NC}"
     echo -e "${CYAN}│${NC}  1. ${GREEN}Установить Glider${NC}"
     echo -e "${CYAN}│${NC}  2. ${BLUE}Обновить Glider${NC}"
-    echo -e "${CYAN}│${NC}  3. ${GREEN}Добавить пользователя${NC}"
-    echo -e "${CYAN}│${NC}  4. ${YELLOW}Управление пользователями${NC}"
-    echo -e "${CYAN}│${NC}  5. ${BLUE}Список пользователей${NC}"
-    echo -e "${CYAN}│${NC}  6. ${RED}Удалить Glider${NC}"
-    echo -e "${CYAN}│${NC}  7. ${MAGENTA}Выход${NC}"
+    echo -e "${CYAN}│${NC}  3. ${YELLOW}Управление пользователями${NC}"
+    echo -e "${CYAN}│${NC}  4. ${BLUE}Обновить скрипт${NC}"
+    echo -e "${CYAN}│${NC}  5. ${RED}Удалить Glider${NC}"
+    echo -e "${CYAN}│${NC}  6. ${MAGENTA}Выход${NC}"
     echo -e "${CYAN}└────────────────────────────────────────┘${NC}"
     echo ""
-    read -p "$(echo -e ${CYAN}Выберите действие ${GREEN}[1-7]${CYAN}: ${NC})" choice
+    read -p "$(echo -e ${CYAN}Выберите действие ${GREEN}[1-6]${CYAN}: ${NC})" choice
     
     case $choice in
         1) install_glider ;;
         2) update_glider ;;
-        3) add_user ;;
-        4) manage_users ;;
-        5) clear; list_users; echo ""; read -p "Нажмите Enter для продолжения..." ;;
-        6) remove_glider ;;
-        7) clear; echo -e "${GREEN}Спасибо за использование Glider Manager!${NC}"; echo ""; exit 0 ;;
+        3) manage_users ;;
+        4) update_script ;;
+        5) remove_glider ;;
+        6) clear; echo -e "${GREEN}Спасибо за использование Glider Manager!${NC}"; echo ""; exit 0 ;;
         *) echo -e "${RED}✗ Неверный выбор${NC}"; sleep 1 ;;
     esac
 }
