@@ -21,15 +21,17 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
 
-# Анимация загрузки
+# Улучшенная анимация загрузки
 spinner() {
     local pid=$1
     local delay=0.1
     local spinstr='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
-    while ps -p $pid > /dev/null 2>&1; do
-        local temp=${spinstr#?}
+    local temp
+    
+    while kill -0 $pid 2>/dev/null; do
+        temp=${spinstr#?}
         printf " [${CYAN}%c${NC}]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
+        spinstr=$temp${spinstr%"$temp"}
         sleep $delay
         printf "\b\b\b\b\b\b"
     done
@@ -674,7 +676,7 @@ manage_users() {
     done
 }
 
-# Удаление Glider
+# Полное удаление Glider
 remove_glider() {
     clear
     echo -e "${RED}╔════════════════════════════════════════╗${NC}"
@@ -697,13 +699,46 @@ remove_glider() {
     fi
 
     echo ""
-    run_with_spinner "Остановка службы..." systemctl stop glider
-    run_with_spinner "Отключение автозапуска..." systemctl disable glider
-    run_with_spinner "Удаление файлов..." bash -c "rm -f $BINARY_PATH $SERVICE_FILE && rm -rf /etc/glider"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    # Остановка службы
+    run_with_spinner "Остановка службы Glider..." systemctl stop glider 2>/dev/null || true
+    
+    # Отключение автозапуска
+    run_with_spinner "Отключение автозапуска..." systemctl disable glider 2>/dev/null || true
+    
+    # Удаление unit файла systemd
+    run_with_spinner "Удаление systemd unit файла..." rm -f "$SERVICE_FILE"
+    
+    # Удаление символических ссылок
+    run_with_spinner "Удаление символических ссылок..." bash -c "rm -f /etc/systemd/system/multi-user.target.wants/glider.service 2>/dev/null || true"
+    
+    # Удаление бинарного файла
+    run_with_spinner "Удаление исполняемого файла..." rm -f "$BINARY_PATH"
+    
+    # Удаление конфигурационных файлов
+    run_with_spinner "Удаление конфигурации..." rm -rf /etc/glider
+    
+    # Удаление временных файлов
+    run_with_spinner "Очистка временных файлов..." bash -c "rm -f /tmp/glider* 2>/dev/null || true"
+    
+    # Перезагрузка systemd для применения изменений
     run_with_spinner "Перезагрузка systemd..." systemctl daemon-reload
+    
+    # Сброс состояния failed служб
+    run_with_spinner "Сброс состояния служб..." systemctl reset-failed 2>/dev/null || true
 
     echo ""
-    echo -e "${GREEN}✓ Glider успешно удалён!${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${GREEN}✓ Glider полностью удалён из системы!${NC}"
+    echo ""
+    echo -e "${CYAN}Удалённые компоненты:${NC}"
+    echo -e "  • Служба systemd (glider.service)"
+    echo -e "  • Исполняемый файл ($BINARY_PATH)"
+    echo -e "  • Конфигурационные файлы (/etc/glider/)"
+    echo -e "  • Символические ссылки служб"
+    echo -e "  • Временные файлы"
     echo ""
     read -p "Нажмите Enter для продолжения..."
 }
