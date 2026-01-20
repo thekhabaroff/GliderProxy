@@ -42,7 +42,6 @@ check_utf8_support() {
 # Определяем поддержку UTF-8
 if check_utf8_support; then
     USE_UTF8=true
-    # UTF-8 иконки и символы
     ICON_ROCKET="🚀"
     ICON_CHECK="✓"
     ICON_CROSS="✗"
@@ -55,43 +54,32 @@ if check_utf8_support; then
     ICON_INFO="ℹ"
     ICON_DOOR="🚪"
     
-    # UTF-8 box drawing
     BOX_H="─"
     BOX_V="│"
     BOX_TL="╭"
     BOX_TR="╮"
     BOX_BL="╰"
     BOX_BR="╯"
-    BOX_VR="├"
-    BOX_VL="┤"
-    BOX_HU="┴"
-    BOX_HD="┬"
 else
     USE_UTF8=false
-    # ASCII иконки
     ICON_ROCKET="[*]"
-    ICON_CHECK="[OK]"
+    ICON_CHECK="[+]"
     ICON_CROSS="[X]"
     ICON_ARROW=">"
     ICON_GEAR="[#]"
     ICON_USER="[@]"
-    ICON_TRASH="[DEL]"
+    ICON_TRASH="[D]"
     ICON_UPDATE="[^]"
     ICON_WARNING="[!]"
     ICON_INFO="[i]"
-    ICON_DOOR="[EXIT]"
+    ICON_DOOR="[E]"
     
-    # ASCII box drawing
     BOX_H="-"
     BOX_V="|"
     BOX_TL="+"
     BOX_TR="+"
     BOX_BL="+"
     BOX_BR="+"
-    BOX_VR="+"
-    BOX_VL="+"
-    BOX_HU="+"
-    BOX_HD="+"
 fi
 
 # Улучшенная анимация загрузки
@@ -136,11 +124,8 @@ run_with_spinner() {
 
 # Функция для рисования линии
 draw_line() {
-    local char="${1:-$BOX_H}"
-    local width="${2:-60}"
-    printf "${CYAN}"
-    printf "%${width}s" | tr ' ' "$char"
-    printf "${NC}\n"
+    local width="${1:-60}"
+    echo -e "    ${CYAN}$(printf "%${width}s" | tr ' ' "$BOX_H")${NC}"
 }
 
 # Красивый заголовок
@@ -148,65 +133,16 @@ print_header() {
     clear
     echo ""
     echo -e "${PURPLE}${BOLD}"
-    printf "    %c" "$BOX_TL"
-    printf "%58s" | tr ' ' "$BOX_H"
-    printf "%c\n" "$BOX_TR"
-    
-    printf "    %c" "$BOX_V"
-    printf "%58s" " "
-    printf "%c\n" "$BOX_V"
-    
+    echo "    ${BOX_TL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_TR}"
+    echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
     if $USE_UTF8; then
-        printf "    %c       %s  GLIDER PROXY MANAGER  %s                    %c\n" "$BOX_V" "$ICON_ROCKET" "$ICON_ROCKET" "$BOX_V"
+        echo "    ${BOX_V}       ${ICON_ROCKET}  ${LIGHT_CYAN}GLIDER PROXY MANAGER${PURPLE}  ${ICON_ROCKET}                    ${BOX_V}"
     else
-        printf "    %c           GLIDER PROXY MANAGER                         %c\n" "$BOX_V" "$BOX_V"
+        echo "    ${BOX_V}           GLIDER PROXY MANAGER                         ${BOX_V}"
     fi
-    
-    printf "    %c" "$BOX_V"
-    printf "%58s" " "
-    printf "%c\n" "$BOX_V"
-    
-    printf "    %c" "$BOX_BL"
-    printf "%58s" | tr ' ' "$BOX_H"
-    printf "%c\n" "$BOX_BR"
+    echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
+    echo "    ${BOX_BL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_BR}"
     echo -e "${NC}"
-}
-
-# Красивый бокс
-print_box() {
-    local title="$1"
-    local width="${2:-60}"
-    
-    printf "    ${LIGHT_CYAN}%c" "$BOX_TL"
-    printf "%${width}s" | tr ' ' "$BOX_H"
-    printf "%c${NC}\n" "$BOX_TR"
-    
-    if [ -n "$title" ]; then
-        printf "    ${LIGHT_CYAN}%c${NC} ${BOLD}%s${NC}\n" "$BOX_V" "$title"
-        printf "    ${LIGHT_CYAN}%c" "$BOX_VR"
-        printf "%${width}s" | tr ' ' "$BOX_H"
-        printf "%c${NC}\n" "$BOX_VL"
-    fi
-}
-
-# Закрыть бокс
-close_box() {
-    local width="${1:-60}"
-    printf "    ${LIGHT_CYAN}%c" "$BOX_BL"
-    printf "%${width}s" | tr ' ' "$BOX_H"
-    printf "%c${NC}\n" "$BOX_BR"
-}
-
-# Строка бокса
-box_line() {
-    local content="$1"
-    printf "    ${LIGHT_CYAN}%c${NC} %s\n" "$BOX_V" "$content"
-}
-
-# Пустая строка бокса
-box_empty() {
-    local width="${1:-60}"
-    printf "    ${LIGHT_CYAN}%c${NC}%${width}s${LIGHT_CYAN}%c${NC}\n" "$BOX_V" " " "$BOX_V"
 }
 
 # Проверка root прав
@@ -215,15 +151,11 @@ check_root() {
         clear
         echo ""
         echo -e "${RED}${BOLD}"
-        printf "    %c" "$BOX_TL"
-        printf "%58s" | tr ' ' "$BOX_H"
-        printf "%c\n" "$BOX_TR"
-        printf "    %c%58s%c\n" "$BOX_V" " " "$BOX_V"
-        printf "    %c                  %s ОШИБКА ДОСТУПА %s                     %c\n" "$BOX_V" "$ICON_WARNING" "$ICON_WARNING" "$BOX_V"
-        printf "    %c%58s%c\n" "$BOX_V" " " "$BOX_V"
-        printf "    %c" "$BOX_BL"
-        printf "%58s" | tr ' ' "$BOX_H"
-        printf "%c\n" "$BOX_BR"
+        echo "    ${BOX_TL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_TR}"
+        echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
+        echo "    ${BOX_V}                  ${ICON_WARNING} ОШИБКА ДОСТУПА ${ICON_WARNING}                     ${BOX_V}"
+        echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
+        echo "    ${BOX_BL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_BR}"
         echo -e "${NC}"
         echo ""
         echo -e "    ${YELLOW}Для запуска требуются права суперпользователя${NC}"
@@ -271,23 +203,30 @@ list_users() {
             password="${BASH_REMATCH[2]}"
             port="${BASH_REMATCH[3]}"
 
-            print_box "${ICON_USER} Пользователь #${count}" 57
-            box_line "  ${GRAY}Логин:${NC}    ${GREEN}${username}${NC}"
-            box_line "  ${GRAY}Пароль:${NC}   ${GREEN}${password}${NC}"
-            box_line "  ${GRAY}Порт:${NC}     ${GREEN}${port}${NC}"
-            box_empty 57
-            box_line "  ${GRAY}HTTP:${NC}     ${BLUE}http://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}${NC}"
-            box_line "  ${GRAY}SOCKS5:${NC}   ${BLUE}socks5://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}${NC}"
-            close_box 57
+            echo -e "    ${LIGHT_CYAN}${BOX_TL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_TR}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC} ${BOLD}${ICON_USER} Пользователь #${count}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Логин:${NC}    ${GREEN}${username}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Пароль:${NC}   ${GREEN}${password}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Порт:${NC}     ${GREEN}${port}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}HTTP:${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}    ${BLUE}http://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}SOCKS5:${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}    ${BLUE}socks5://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_BL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_BR}${NC}"
             echo ""
             ((count++))
             found=1
         elif [[ $line =~ ^listen=mixed://:([0-9]+) ]]; then
             port="${BASH_REMATCH[1]}"
 
-            print_box "Порт без аутентификации #${count}" 57
-            box_line "  ${GRAY}Порт:${NC} ${GREEN}${port}${NC}"
-            close_box 57
+            echo -e "    ${LIGHT_CYAN}${BOX_TL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_TR}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC} ${BOLD}Порт без аутентификации #${count}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Порт:${NC} ${GREEN}${port}${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_BL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_BR}${NC}"
             echo ""
             ((count++))
             found=1
@@ -316,7 +255,7 @@ update_script() {
     echo ""
     echo -e "    ${LIGHT_BLUE}${BOLD}${ICON_UPDATE} ОБНОВЛЕНИЕ СКРИПТА${NC}"
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     echo -e "    ${YELLOW}${ICON_WARNING} Будет загружена последняя версия скрипта${NC}"
@@ -327,7 +266,7 @@ update_script() {
     fi
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     TEMP_SCRIPT=$(mktemp)
@@ -364,7 +303,7 @@ update_script() {
     echo -e " ${GREEN}${ICON_CHECK}${NC}"
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
     echo -e "    ${GREEN}${BOLD}${ICON_CHECK} Скрипт успешно обновлён!${NC}"
     echo ""
@@ -381,7 +320,7 @@ install_glider() {
     echo ""
     echo -e "    ${GREEN}${BOLD}${ICON_GEAR} УСТАНОВКА GLIDER${NC}"
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     if check_glider_installed; then
@@ -410,7 +349,7 @@ install_glider() {
     fi
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
     echo -e "    ${CYAN}Начинается установка...${NC}"
     echo ""
@@ -486,20 +425,16 @@ EOF
     sleep 2
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     if systemctl is-active --quiet glider; then
         echo -e "${GREEN}${BOLD}"
-        printf "    %c" "$BOX_TL"
-        printf "%58s" | tr ' ' "$BOX_H"
-        printf "%c\n" "$BOX_TR"
-        printf "    %c%58s%c\n" "$BOX_V" " " "$BOX_V"
-        printf "    %c         ${ICON_CHECK} УСТАНОВКА ЗАВЕРШЕНА УСПЕШНО! ${ICON_CHECK}              %c\n" "$BOX_V" "$BOX_V"
-        printf "    %c%58s%c\n" "$BOX_V" " " "$BOX_V"
-        printf "    %c" "$BOX_BL"
-        printf "%58s" | tr ' ' "$BOX_H"
-        printf "%c\n" "$BOX_BR"
+        echo "    ${BOX_TL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_TR}"
+        echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
+        echo "    ${BOX_V}         ${ICON_CHECK} УСТАНОВКА ЗАВЕРШЕНА УСПЕШНО! ${ICON_CHECK}              ${BOX_V}"
+        echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
+        echo "    ${BOX_BL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_BR}"
         echo -e "${NC}"
         echo ""
         echo -e "    ${GRAY}Порт:${NC}    ${GREEN}$PROXY_PORT${NC}"
@@ -525,15 +460,11 @@ EOF
         echo -e "    ${GRAY}Управление:${NC} ${DIM}systemctl {start|stop|restart|status} glider${NC}"
     else
         echo -e "${RED}${BOLD}"
-        printf "    %c" "$BOX_TL"
-        printf "%58s" | tr ' ' "$BOX_H"
-        printf "%c\n" "$BOX_TR"
-        printf "    %c%58s%c\n" "$BOX_V" " " "$BOX_V"
-        printf "    %c         ${ICON_CROSS} ОШИБКА: СЛУЖБА НЕ ЗАПУСТИЛАСЬ ${ICON_CROSS}           %c\n" "$BOX_V" "$BOX_V"
-        printf "    %c%58s%c\n" "$BOX_V" " " "$BOX_V"
-        printf "    %c" "$BOX_BL"
-        printf "%58s" | tr ' ' "$BOX_H"
-        printf "%c\n" "$BOX_BR"
+        echo "    ${BOX_TL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_TR}"
+        echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
+        echo "    ${BOX_V}         ${ICON_CROSS} ОШИБКА: СЛУЖБА НЕ ЗАПУСТИЛАСЬ ${ICON_CROSS}           ${BOX_V}"
+        echo "    ${BOX_V}$(printf "%58s" " ")${BOX_V}"
+        echo "    ${BOX_BL}$(printf "%58s" | tr ' ' "$BOX_H")${BOX_BR}"
         echo -e "${NC}"
         echo ""
         echo -e "    ${YELLOW}Проверьте логи:${NC} ${DIM}journalctl -u glider -n 50${NC}"
@@ -549,7 +480,7 @@ update_glider() {
     echo ""
     echo -e "    ${GREEN}${BOLD}${ICON_UPDATE} ОБНОВЛЕНИЕ GLIDER${NC}"
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     if ! check_glider_installed; then
@@ -571,7 +502,7 @@ update_glider() {
     fi
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     run_with_spinner "    Остановка службы..." systemctl stop glider
@@ -598,7 +529,7 @@ update_glider() {
     sleep 2
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     if systemctl is-active --quiet glider; then
@@ -619,7 +550,7 @@ manage_users() {
         echo ""
         echo -e "    ${BLUE}${BOLD}${ICON_USER} УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ${NC}"
         echo ""
-        draw_line "$BOX_H" 60
+        draw_line 60
 
         if ! check_glider_installed; then
             echo ""
@@ -636,14 +567,14 @@ manage_users() {
             user_count=$(grep -c "^listen=" "$CONFIG_FILE" 2>/dev/null || echo "0")
         fi
 
-        print_box "" 57
-        box_empty 57
-        box_line "   ${GREEN}1.${NC} Добавить пользователя"
-        box_line "   ${YELLOW}2.${NC} Изменить пользователя"
-        box_line "   ${RED}3.${NC} Удалить пользователя"
-        box_line "   ${MAGENTA}4.${NC} Назад"
-        box_empty 57
-        close_box 57
+        echo -e "    ${LIGHT_CYAN}${BOX_TL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_TR}${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${GREEN}1.${NC} Добавить пользователя"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${YELLOW}2.${NC} Изменить пользователя"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${RED}3.${NC} Удалить пользователя"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${MAGENTA}4.${NC} Назад"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_BL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_BR}${NC}"
         echo ""
         read -p "    $(echo -e ${CYAN}Выберите действие ${GREEN}[1-4]${CYAN}: ${NC})" action
 
@@ -853,7 +784,7 @@ remove_glider() {
     echo ""
     echo -e "    ${RED}${BOLD}${ICON_TRASH} УДАЛЕНИЕ GLIDER${NC}"
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     if ! check_glider_installed; then
@@ -871,7 +802,7 @@ remove_glider() {
     fi
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
 
     run_with_spinner "    Остановка службы Glider..." systemctl stop glider 2>/dev/null || true
@@ -885,16 +816,16 @@ remove_glider() {
     run_with_spinner "    Сброс состояния служб..." systemctl reset-failed 2>/dev/null || true
 
     echo ""
-    draw_line "$BOX_H" 60
+    draw_line 60
     echo ""
     echo -e "    ${GREEN}${BOLD}${ICON_CHECK} Glider полностью удалён из системы!${NC}"
     echo ""
     echo -e "    ${CYAN}${ICON_INFO} Удалённые компоненты:${NC}"
-    echo -e "      ${DIM}Служба systemd (glider.service)${NC}"
-    echo -e "      ${DIM}Исполняемый файл ($BINARY_PATH)${NC}"
-    echo -e "      ${DIM}Конфигурационные файлы (/etc/glider/)${NC}"
-    echo -e "      ${DIM}Символические ссылки служб${NC}"
-    echo -e "      ${DIM}Временные файлы${NC}"
+    echo -e "      ${DIM}• Служба systemd (glider.service)${NC}"
+    echo -e "      ${DIM}• Исполняемый файл ($BINARY_PATH)${NC}"
+    echo -e "      ${DIM}• Конфигурационные файлы (/etc/glider/)${NC}"
+    echo -e "      ${DIM}• Символические ссылки служб${NC}"
+    echo -e "      ${DIM}• Временные файлы${NC}"
     echo ""
     read -p "    Нажмите Enter для продолжения..."
 }
@@ -908,32 +839,37 @@ show_menu() {
         CURRENT_VERSION=$(get_current_version)
         STATUS=$(systemctl is-active glider 2>/dev/null || echo "остановлена")
         
-        print_box "Информация о системе" 57
+        echo -e "    ${LIGHT_CYAN}${BOX_TL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_TR}${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC} ${BOLD}Информация о системе${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
         if [ "$STATUS" == "active" ]; then
-            box_line "  ${GRAY}Статус:${NC}  ${GREEN}[*] Установлен${NC} ${DIM}(v$CURRENT_VERSION)${NC}"
-            box_line "  ${GRAY}Служба:${NC}  ${GREEN}[*] Запущена${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Статус:${NC}  ${GREEN}[*] Установлен${NC} ${DIM}(v$CURRENT_VERSION)${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Служба:${NC}  ${GREEN}[*] Запущена${NC}"
         else
-            box_line "  ${GRAY}Статус:${NC}  ${RED}[X] Установлен${NC} ${DIM}(v$CURRENT_VERSION)${NC}"
-            box_line "  ${GRAY}Служба:${NC}  ${RED}[X] Остановлена${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Статус:${NC}  ${RED}[X] Установлен${NC} ${DIM}(v$CURRENT_VERSION)${NC}"
+            echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Служба:${NC}  ${RED}[X] Остановлена${NC}"
         fi
-        close_box 57
+        echo -e "    ${LIGHT_CYAN}${BOX_BL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_BR}${NC}"
     else
-        print_box "Информация о системе" 57
-        box_line "  ${GRAY}Статус:${NC}  ${YELLOW}[!] Не установлен${NC}"
-        close_box 57
+        echo -e "    ${LIGHT_CYAN}${BOX_TL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_TR}${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC} ${BOLD}Информация о системе${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}  ${GRAY}Статус:${NC}  ${YELLOW}[!] Не установлен${NC}"
+        echo -e "    ${LIGHT_CYAN}${BOX_BL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_BR}${NC}"
     fi
 
     echo ""
-    print_box "Доступные действия" 57
-    box_empty 57
-    box_line "   ${GREEN}1.${NC} ${ICON_GEAR}  Установить Glider"
-    box_line "   ${BLUE}2.${NC} ${ICON_UPDATE}  Обновить Glider"
-    box_line "   ${YELLOW}3.${NC} ${ICON_USER}  Управление пользователями"
-    box_line "   ${BLUE}4.${NC} ${ICON_UPDATE}  Обновить скрипт"
-    box_line "   ${RED}5.${NC} ${ICON_TRASH}  Удалить Glider"
-    box_line "   ${MAGENTA}6.${NC} ${ICON_DOOR}  Выход"
-    box_empty 57
-    close_box 57
+    echo -e "    ${LIGHT_CYAN}${BOX_TL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_TR}${NC}"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC} ${BOLD}Доступные действия${NC}"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${GREEN}1.${NC} ${ICON_GEAR}  Установить Glider"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${BLUE}2.${NC} ${ICON_UPDATE}  Обновить Glider"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${YELLOW}3.${NC} ${ICON_USER}  Управление пользователями"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${BLUE}4.${NC} ${ICON_UPDATE}  Обновить скрипт"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${RED}5.${NC} ${ICON_TRASH}  Удалить Glider"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}   ${MAGENTA}6.${NC} ${ICON_DOOR}  Выход"
+    echo -e "    ${LIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "    ${LIGHT_CYAN}${BOX_BL}$(printf "%57s" | tr ' ' "$BOX_H")${BOX_BR}${NC}"
     echo ""
     read -p "    $(echo -e ${CYAN}Выберите действие ${GREEN}[1-6]${CYAN}: ${NC})" choice
 
