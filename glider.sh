@@ -20,7 +20,20 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 WHITE='\033[1;37m'
+BOLD='\033[1m'
 NC='\033[0m'
+
+# Отрисовка заголовка
+draw_header() {
+    local title="$1"
+    echo ""
+    if [ ! -z "$title" ]; then
+        echo -e "    ${CYAN}╔═══════════════════════════════════════════════╗${NC}"
+        echo -e "    ${CYAN}║${NC}          ${BOLD}${WHITE}$title${NC}          ${CYAN}║${NC}"
+        echo -e "    ${CYAN}╚═══════════════════════════════════════════════╝${NC}"
+        echo ""
+    fi
+}
 
 # Анимация загрузки
 spinner() {
@@ -102,42 +115,38 @@ list_users() {
 
     local count=1
     local found=0
+    
+    # Заголовок таблицы
+    echo -e "    ${BOLD}┌────┬──────────────────────┬──────────────────────┬──────────┐${NC}"
+    printf "    ${BOLD}│ %-2s │ %-20s │ %-20s │ %-8s │${NC}\n" "ID" "ЛОГИН" "ПАРОЛЬ" "ПОРТ"
+    echo -e "    ${BOLD}├────┼──────────────────────┼──────────────────────┼──────────┤${NC}"
 
     while IFS= read -r line; do
-        if [[ $line =~ ^listen=mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+        if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
             username="${BASH_REMATCH[1]}"
             password="${BASH_REMATCH[2]}"
             port="${BASH_REMATCH[3]}"
+            
+            # Обрезаем длинные строки для красоты
+            if [ ${#username} -gt 20 ]; then username="${username:0:17}..."; fi
+            if [ ${#password} -gt 20 ]; then password="${password:0:17}..."; fi
 
-            echo -e "    ${CYAN}╭─────────────────────────────────────────────╮${NC}"
-            echo -e "    ${CYAN}│${NC} ${WHITE}#$count${NC}                                          ${CYAN}│${NC}"
-            echo -e "    ${CYAN}├─────────────────────────────────────────────┤${NC}"
-            echo -e "    ${CYAN}│${NC}  ${BLUE}👤 Логин:${NC}   ${GREEN}$username${NC}"
-            echo -e "    ${CYAN}│${NC}  ${BLUE}🔑 Пароль:${NC}  ${GREEN}$password${NC}"
-            echo -e "    ${CYAN}│${NC}  ${BLUE}🔌 Порт:${NC}    ${GREEN}$port${NC}"
-            echo -e "    ${CYAN}│${NC}"
-            echo -e "    ${CYAN}│${NC}  ${MAGENTA}HTTP:${NC}"
-            echo -e "    ${CYAN}│${NC}  ${WHITE}http://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}${NC}"
-            echo -e "    ${CYAN}│${NC}"
-            echo -e "    ${CYAN}│${NC}  ${MAGENTA}SOCKS5:${NC}"
-            echo -e "    ${CYAN}│${NC}  ${WHITE}socks5://${username}:${password}@$(hostname -I | awk '{print $1}'):${port}${NC}"
-            echo -e "    ${CYAN}╰─────────────────────────────────────────────╯${NC}"
-            echo ""
+            printf "    │ ${WHITE}%-2s${NC} │ ${GREEN}%-20s${NC} │ ${YELLOW}%-20s${NC} │ ${CYAN}%-8s${NC} │\n" "$count" "$username" "$password" "$port"
+            
             ((count++))
             found=1
-        elif [[ $line =~ ^listen=mixed://:([0-9]+) ]]; then
+        elif [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://:([0-9]+) ]]; then
             port="${BASH_REMATCH[1]}"
 
-            echo -e "    ${CYAN}╭─────────────────────────────────────────────╮${NC}"
-            echo -e "    ${CYAN}│${NC} ${WHITE}#$count${NC}                                          ${CYAN}│${NC}"
-            echo -e "    ${CYAN}├─────────────────────────────────────────────┤${NC}"
-            echo -e "    ${CYAN}│${NC}  ${YELLOW}⚠ Порт без аутентификации:${NC} ${GREEN}$port${NC}"
-            echo -e "    ${CYAN}╰─────────────────────────────────────────────╯${NC}"
-            echo ""
+            printf "    │ ${WHITE}%-2s${NC} │ ${MAGENTA}%-20s${NC} │ ${MAGENTA}%-20s${NC} │ ${CYAN}%-8s${NC} │\n" "$count" "(без авторизации)" "-" "$port"
+
             ((count++))
             found=1
         fi
     done < "$CONFIG_FILE"
+
+    echo -e "    ${BOLD}└────┴──────────────────────┴──────────────────────┴──────────┘${NC}"
+    echo ""
 
     if [ $found -eq 0 ]; then
         echo -e "    ${YELLOW}╰─➤ Пользователей не найдено${NC}"
@@ -148,11 +157,21 @@ list_users() {
 # Проверка занятости порта
 check_port_used() {
     local port=$1
+    # 1. Проверка в конфиге Glider
     if [ -f "$CONFIG_FILE" ] && grep -q ":${port}\$" "$CONFIG_FILE" 2>/dev/null; then
         return 0
-    else
-        return 1
     fi
+    # 2. Проверка системных портов (если утилиты доступны)
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tuln | grep -q ":${port} "; then
+            return 0
+        fi
+    elif command -v netstat >/dev/null 2>&1; then
+        if netstat -tuln | grep -q ":${port} "; then
+            return 0
+        fi
+    fi
+    return 1
 }
 
 # Обновление скрипта
@@ -484,7 +503,7 @@ manage_users() {
 
         local user_count=0
         if [ -f "$CONFIG_FILE" ]; then
-            user_count=$(grep -c "^listen=" "$CONFIG_FILE" 2>/dev/null || echo "0")
+            user_count=$(grep -c "^[[:space:]]*listen=" "$CONFIG_FILE" 2>/dev/null || echo "0")
         fi
 
         echo -e "    ${CYAN}╭───────────────────────────────────────────────╮${NC}"
@@ -565,17 +584,26 @@ manage_users() {
                 fi
 
                 echo ""
-                read -p "    Введите номер пользователя для изменения: " user_num
+                read -p "    Введите ПОРТ пользователя для изменения: " target_port
 
-                if ! [[ "$user_num" =~ ^[0-9]+$ ]] || [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; then
-                    echo -e "    ${RED}✗ Неверный номер${NC}"
+                if [ -z "$target_port" ]; then
+                     echo -e "    ${RED}✗ Порт не введен${NC}"
+                     sleep 2
+                     continue
+                fi
+
+                # Ищем номер строки по порту
+                user_num=$(grep -n ":${target_port}\$" "$CONFIG_FILE" | cut -d: -f1)
+
+                if [ -z "$user_num" ]; then
+                    echo -e "    ${RED}✗ Пользователь с портом $target_port не найден${NC}"
                     sleep 2
                     continue
                 fi
 
-                local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
+                local line=$(sed -n "${user_num}p" "$CONFIG_FILE")
 
-                if [[ $line =~ ^listen=mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+                if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
                     old_username="${BASH_REMATCH[1]}"
                     old_password="${BASH_REMATCH[2]}"
                     old_port="${BASH_REMATCH[3]}"
@@ -603,9 +631,18 @@ manage_users() {
                     continue
                 fi
 
+                if [ "$new_port" -lt 1024 ] && [ "$new_port" != "$old_port" ]; then
+                    echo ""
+                    echo -e "    ${YELLOW}⚠ Внимание: Порт $new_port является привилегированным (< 1024).${NC}"
+                    read -p "    Вы уверены? (y/n): " CONFIRM_PORT
+                    if [[ "$CONFIRM_PORT" != "y" && "$CONFIRM_PORT" != "Y" ]]; then
+                        continue
+                    fi
+                fi
+
                 echo ""
                 run_with_spinner "    Изменение пользователя..." sed -i "s|^listen=.*:${old_port}\$|listen=mixed://${new_username}:${new_password}@:${new_port}|" $CONFIG_FILE
-                run_with_spinner "    Перезапуск службы..." systemctl restart glider
+                run_with_spinner "    Перезапуск службы..." systemctl restart glider || true
 
                 sleep 2
 
@@ -646,9 +683,9 @@ manage_users() {
                     continue
                 fi
 
-                local line=$(grep "^listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
+                local line=$(grep "^[[:space:]]*listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
 
-                if [[ $line =~ :([0-9]+)$ ]]; then
+                if [[ $line =~ :([0-9]+)[[:space:]]*$ ]]; then
                     port="${BASH_REMATCH[1]}"
                 else
                     echo -e "    ${RED}✗ Ошибка чтения порта${NC}"
@@ -656,7 +693,7 @@ manage_users() {
                     continue
                 fi
 
-                if [[ $line =~ ^listen=mixed://([^:]+): ]]; then
+                if [[ $line =~ mixed://([^:]+): ]]; then
                     username="${BASH_REMATCH[1]}"
                 else
                     username="noauth"
@@ -670,7 +707,7 @@ manage_users() {
 
                 echo ""
                 run_with_spinner "    Удаление пользователя..." sed -i "/^listen=.*:${port}\$/d" $CONFIG_FILE
-                run_with_spinner "    Перезапуск службы..." systemctl restart glider
+                run_with_spinner "    Перезапуск службы..." systemctl restart glider || true
 
                 sleep 2
 
@@ -739,43 +776,45 @@ remove_glider() {
 # Главное меню
 show_menu() {
     clear
-    echo -e "${CYAN}"
-    echo "    ╔═══════════════════════════════════════════════╗"
-    echo "    ║                                               ║"
-    echo -e "    ${CYAN}║${NC}          ${WHITE}🚀 PROXY MANAGER v${VERSION} 🚀${NC}         ${CYAN}║${NC}"
-    echo -e "${CYAN}    ║                                     ║"
-    echo "    ╚═══════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    echo ""
+    draw_header "PROXY MANAGER v${VERSION}"
 
     if check_glider_installed; then
         CURRENT_VERSION=$(get_current_version)
         STATUS=$(systemctl is-active glider 2>/dev/null || echo "остановлена")
+        
+        # Определяем цвет статуса
+        if [ "$STATUS" == "active" ]; then
+            STATUS_ICON="${GREEN}●${NC}"
+            STATUS_TEXT="${GREEN}Запущена${NC}"
+        else
+            STATUS_ICON="${RED}●${NC}"
+            STATUS_TEXT="${RED}Остановлена${NC}"
+        fi
+
         echo -e "    ${BLUE}┌─────────────────────────────────────────────┐${NC}"
-        echo -e "    ${BLUE}│${NC}  ${WHITE}Статус системы${NC}                           ${BLUE}│${NC}"
+        echo -e "    ${BLUE}│${NC}  ${BOLD}Статус системы${NC}                           ${BLUE}│${NC}"
         echo -e "    ${BLUE}├─────────────────────────────────────────────┤${NC}"
-        echo -e "    ${BLUE}│${NC}  Версия:  $([ "$STATUS" == "active" ] && echo -e "${GREEN}●${NC} v$CURRENT_VERSION" || echo -e "${YELLOW}●${NC} v$CURRENT_VERSION")"
-        echo -e "    ${BLUE}│${NC}  Служба:  $([ "$STATUS" == "active" ] && echo -e "${GREEN}●${NC} Запущена" || echo -e "${RED}●${NC} Остановлена")"
+        printf "    ${BLUE}│${NC}  Версия:  %-33s ${BLUE}│${NC}\n" "${STATUS_ICON} v$CURRENT_VERSION"
+        printf "    ${BLUE}│${NC}  Служба:  %-33s ${BLUE}│${NC}\n" "${STATUS_TEXT}"
         echo -e "    ${BLUE}└─────────────────────────────────────────────┘${NC}"
     else
         echo -e "    ${BLUE}┌─────────────────────────────────────────────┐${NC}"
-        echo -e "    ${BLUE}│${NC}  ${WHITE}Статус системы${NC}                           ${BLUE}│${NC}"
+        echo -e "    ${BLUE}│${NC}  ${BOLD}Статус системы${NC}                           ${BLUE}│${NC}"
         echo -e "    ${BLUE}├─────────────────────────────────────────────┤${NC}"
-        echo -e "    ${BLUE}│${NC}  Статус:  ${YELLOW}●${NC} Не установлен"
+        echo -e "    ${BLUE}│${NC}  Статус:  ${YELLOW}●${NC} Не установлен               ${BLUE}│${NC}"
         echo -e "    ${BLUE}└─────────────────────────────────────────────┘${NC}"
     fi
 
     echo ""
-    echo -e "    ${CYAN}╭───────────────────────────────────────────────╮${NC}"
-    echo -e "    ${CYAN}│${NC}                                                 ${CYAN}│${NC}"
+    echo -e "    ${BOLD}МЕНЮ ДЕЙСТВИЙ:${NC}"
+    echo -e "    ${CYAN}┌───────────────────────────────────────────────┐${NC}"
     echo -e "    ${CYAN}│${NC}    ${GREEN}[1]${NC} 📥  Установить Glider                   ${CYAN}│${NC}"
     echo -e "    ${CYAN}│${NC}    ${BLUE}[2]${NC} ⬆️   Обновить Glider                     ${CYAN}│${NC}"
     echo -e "    ${CYAN}│${NC}    ${YELLOW}[3]${NC} 👥  Управление пользователями           ${CYAN}│${NC}"
     echo -e "    ${CYAN}│${NC}    ${BLUE}[4]${NC} 🔄  Обновить скрипт                      ${CYAN}│${NC}"
     echo -e "    ${CYAN}│${NC}    ${RED}[5]${NC} 🗑️   Удалить Glider                      ${CYAN}│${NC}"
     echo -e "    ${CYAN}│${NC}    ${MAGENTA}[6]${NC} 🚪  Выход                                ${CYAN}│${NC}"
-    echo -e "    ${CYAN}│${NC}                                                 ${CYAN}│${NC}"
-    echo -e "    ${CYAN}╰───────────────────────────────────────────────╯${NC}"
+    echo -e "    ${CYAN}└───────────────────────────────────────────────┘${NC}"
     echo ""
     read -p "    $(echo -e ${CYAN}Выберите действие ${GREEN}[1-6]${CYAN}: ${NC})" choice
 
@@ -786,6 +825,16 @@ show_menu() {
         4) update_script ;;
         5) remove_glider ;;
         6) clear; echo -e "    ${GREEN}✓ Спасибо за использование Glider Manager!${NC}"; echo ""; exit 0 ;;
+        *) echo -e "    ${RED}✗ Неверный выбор${NC}"; sleep 1 ;;
+    esac
+}
+
+# Основной цикл
+check_root
+
+while true; do
+    show_menu
+done
         *) echo -e "    ${RED}✗ Неверный выбор${NC}"; sleep 1 ;;
     esac
 }
