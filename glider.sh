@@ -3,8 +3,6 @@
 # Скрипт управления Glider Proxy Server
 # Использование: glider
 
-set -e
-
 CONFIG_FILE="/etc/glider/glider.conf"
 SERVICE_FILE="/etc/systemd/system/glider.service"
 BINARY_PATH="/usr/local/bin/glider-bin"
@@ -69,7 +67,7 @@ run_with_spinner() {
 
 # Проверка root прав
 check_root() {
-    if [ "$EUID" -ne 0 ]; then 
+    if [ "$EUID" -ne 0 ]; then
         clear
         echo -e "${RED}"
         echo "    ╔═══════════════════════════════════════════════╗"
@@ -85,6 +83,31 @@ check_root() {
         echo ""
         exit 1
     fi
+}
+
+# ───── Валидация логина/пароля ─────
+validate_credentials() {
+    local value="$1"
+    local name="$2"
+    if [[ "$value" =~ [@:/] ]]; then
+        echo -e "    ${RED}✗ ${name} не должен содержать символы @, : или /${NC}"
+        return 1
+    fi
+    if [ -z "$value" ]; then
+        echo -e "    ${RED}✗ ${name} не может быть пустым${NC}"
+        return 1
+    fi
+    return 0
+}
+
+# ───── Валидация порта ─────
+validate_port() {
+    local port="$1"
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        echo -e "    ${RED}✗ Порт должен быть числом от 1 до 65535${NC}"
+        return 1
+    fi
+    return 0
 }
 
 # Проверка установки Glider
@@ -115,8 +138,7 @@ list_users() {
 
     local count=1
     local found=0
-    
-    # Заголовок таблицы
+
     echo -e "    ${BOLD}┌────┬──────────────────────┬──────────────────────┬──────────┐${NC}"
     printf "    ${BOLD}│ %-2s │ %-20s │ %-20s │ %-8s │${NC}\n" "ID" "ЛОГИН" "ПАРОЛЬ" "ПОРТ"
     echo -e "    ${BOLD}├────┼──────────────────────┼──────────────────────┼──────────┤${NC}"
@@ -126,20 +148,14 @@ list_users() {
             username="${BASH_REMATCH[1]}"
             password="${BASH_REMATCH[2]}"
             port="${BASH_REMATCH[3]}"
-            
-            # Обрезаем длинные строки для красоты
             if [ ${#username} -gt 20 ]; then username="${username:0:17}..."; fi
             if [ ${#password} -gt 20 ]; then password="${password:0:17}..."; fi
-
             printf "    │ ${WHITE}%-2s${NC} │ ${GREEN}%-20s${NC} │ ${YELLOW}%-20s${NC} │ ${CYAN}%-8s${NC} │\n" "$count" "$username" "$password" "$port"
-            
             ((count++))
             found=1
         elif [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://:([0-9]+) ]]; then
             port="${BASH_REMATCH[1]}"
-
             printf "    │ ${WHITE}%-2s${NC} │ ${MAGENTA}%-20s${NC} │ ${MAGENTA}%-20s${NC} │ ${CYAN}%-8s${NC} │\n" "$count" "(без авторизации)" "-" "$port"
-
             ((count++))
             found=1
         fi
@@ -157,11 +173,9 @@ list_users() {
 # Проверка занятости порта
 check_port_used() {
     local port=$1
-    # 1. Проверка в конфиге Glider
-    if [ -f "$CONFIG_FILE" ] && grep -q ":${port}\$" "$CONFIG_FILE" 2>/dev/null; then
+    if [ -f "$CONFIG_FILE" ] && grep -q ":${port}$" "$CONFIG_FILE" 2>/dev/null; then
         return 0
     fi
-    # 2. Проверка системных портов (если утилиты доступны)
     if command -v ss >/dev/null 2>&1; then
         if ss -tuln | grep -q ":${port} "; then
             return 0
@@ -262,16 +276,29 @@ install_glider() {
 
     echo -e "    ${CYAN}➤ Настройка первого пользователя${NC}"
     echo ""
-    read -p "    Введите порт для прокси [18443]: " PROXY_PORT
-    PROXY_PORT=${PROXY_PORT:-18443}
+
+    while true; do
+        read -p "    Введите порт для прокси [18443]: " PROXY_PORT
+        PROXY_PORT=${PROXY_PORT:-18443}
+        validate_port "$PROXY_PORT" && break
+        sleep 1
+    done
 
     read -p "    Добавить аутентификацию? (y/n) [n]: " ADD_AUTH
     ADD_AUTH=${ADD_AUTH:-n}
 
     if [[ "$ADD_AUTH" == "y" || "$ADD_AUTH" == "Y" ]]; then
-        read -p "    Введите логин: " PROXY_USER
-        read -sp "    Введите пароль: " PROXY_PASS
-        echo
+        while true; do
+            read -p "    Введите логин: " PROXY_USER
+            validate_credentials "$PROXY_USER" "Логин" && break
+            sleep 1
+        done
+        while true; do
+            read -sp "    Введите пароль: " PROXY_PASS
+            echo
+            validate_credentials "$PROXY_PASS" "Пароль" && break
+            sleep 1
+        done
         LISTEN_STRING="listen=mixed://${PROXY_USER}:${PROXY_PASS}@:${PROXY_PORT}"
     else
         LISTEN_STRING="listen=mixed://:${PROXY_PORT}"
@@ -346,7 +373,6 @@ WantedBy=multi-user.target
 EOF
 
     run_with_spinner "    Создание systemd службы..." sleep 0.5
-
     run_with_spinner "    Перезагрузка systemd..." systemctl daemon-reload
     run_with_spinner "    Включение автозапуска..." systemctl enable glider
     run_with_spinner "    Запуск службы..." systemctl start glider
@@ -522,37 +548,30 @@ manage_users() {
                 echo ""
                 echo -e "    ${CYAN}➤ Создание нового пользователя${NC}"
                 echo ""
-                read -p "    Введите новый логин: " NEW_USER
 
-                if [ -z "$NEW_USER" ]; then
-                    echo -e "    ${RED}✗ Логин не может быть пустым${NC}"
-                    sleep 2
-                    continue
-                fi
+                while true; do
+                    read -p "    Введите новый логин: " NEW_USER
+                    validate_credentials "$NEW_USER" "Логин" && break
+                    sleep 1
+                done
 
-                read -sp "    Введите новый пароль: " NEW_PASS
-                echo
+                while true; do
+                    read -sp "    Введите новый пароль: " NEW_PASS
+                    echo
+                    validate_credentials "$NEW_PASS" "Пароль" && break
+                    sleep 1
+                done
 
-                if [ -z "$NEW_PASS" ]; then
-                    echo -e "    ${RED}✗ Пароль не может быть пустым${NC}"
-                    sleep 2
-                    continue
-                fi
-
-                read -p "    Введите порт для этого пользователя: " NEW_PORT
-
-                if [ -z "$NEW_PORT" ]; then
-                    echo -e "    ${RED}✗ Порт не может быть пустым${NC}"
-                    sleep 2
-                    continue
-                fi
-
-                if check_port_used "$NEW_PORT"; then
-                    echo ""
-                    echo -e "    ${RED}✗ Порт $NEW_PORT уже используется!${NC}"
-                    sleep 2
-                    continue
-                fi
+                while true; do
+                    read -p "    Введите порт для этого пользователя: " NEW_PORT
+                    validate_port "$NEW_PORT" || { sleep 1; continue; }
+                    if check_port_used "$NEW_PORT"; then
+                        echo -e "    ${RED}✗ Порт $NEW_PORT уже используется!${NC}"
+                        sleep 1
+                        continue
+                    fi
+                    break
+                done
 
                 echo ""
                 run_with_spinner "    Добавление пользователя..." sed -i "/^# HTTP + SOCKS5 прокси/a listen=mixed://${NEW_USER}:${NEW_PASS}@:${NEW_PORT}" $CONFIG_FILE
@@ -587,13 +606,12 @@ manage_users() {
                 read -p "    Введите ПОРТ пользователя для изменения: " target_port
 
                 if [ -z "$target_port" ]; then
-                     echo -e "    ${RED}✗ Порт не введен${NC}"
-                     sleep 2
-                     continue
+                    echo -e "    ${RED}✗ Порт не введен${NC}"
+                    sleep 2
+                    continue
                 fi
 
-                # Ищем номер строки по порту
-                user_num=$(grep -n ":${target_port}\$" "$CONFIG_FILE" | cut -d: -f1)
+                user_num=$(grep -n ":${target_port}$" "$CONFIG_FILE" | cut -d: -f1)
 
                 if [ -z "$user_num" ]; then
                     echo -e "    ${RED}✗ Пользователь с портом $target_port не найден${NC}"
@@ -618,11 +636,16 @@ manage_users() {
                 echo ""
                 read -p "    Новый логин [$old_username]: " new_username
                 new_username=${new_username:-$old_username}
+                if ! validate_credentials "$new_username" "Логин"; then sleep 2; continue; fi
+
                 read -sp "    Новый пароль [оставить текущий]: " new_password
                 echo
                 new_password=${new_password:-$old_password}
+                if ! validate_credentials "$new_password" "Пароль"; then sleep 2; continue; fi
+
                 read -p "    Новый порт [$old_port]: " new_port
                 new_port=${new_port:-$old_port}
+                if ! validate_port "$new_port"; then sleep 2; continue; fi
 
                 if [ "$new_port" != "$old_port" ] && check_port_used "$new_port"; then
                     echo ""
@@ -641,7 +664,7 @@ manage_users() {
                 fi
 
                 echo ""
-                run_with_spinner "    Изменение пользователя..." sed -i "s|^listen=.*:${old_port}\$|listen=mixed://${new_username}:${new_password}@:${new_port}|" $CONFIG_FILE
+                run_with_spinner "    Изменение пользователя..." sed -i "s|^listen=.*:${old_port}$|listen=mixed://${new_username}:${new_password}@:${new_port}|" $CONFIG_FILE
                 run_with_spinner "    Перезапуск службы..." systemctl restart glider || true
 
                 sleep 2
@@ -706,7 +729,7 @@ manage_users() {
                 fi
 
                 echo ""
-                run_with_spinner "    Удаление пользователя..." sed -i "/^listen=.*:${port}\$/d" $CONFIG_FILE
+                run_with_spinner "    Удаление пользователя..." sed -i "/^listen=.*:${port}$/d" $CONFIG_FILE
                 run_with_spinner "    Перезапуск службы..." systemctl restart glider || true
 
                 sleep 2
@@ -781,8 +804,7 @@ show_menu() {
     if check_glider_installed; then
         CURRENT_VERSION=$(get_current_version)
         STATUS=$(systemctl is-active glider 2>/dev/null || echo "остановлена")
-        
-        # Определяем цвет статуса
+
         if [ "$STATUS" == "active" ]; then
             STATUS_ICON="${GREEN}●${NC}"
             STATUS_TEXT="${GREEN}Запущена${NC}"
@@ -825,16 +847,6 @@ show_menu() {
         4) update_script ;;
         5) remove_glider ;;
         6) clear; echo -e "    ${GREEN}✓ Спасибо за использование Glider Manager!${NC}"; echo ""; exit 0 ;;
-        *) echo -e "    ${RED}✗ Неверный выбор${NC}"; sleep 1 ;;
-    esac
-}
-
-# Основной цикл
-check_root
-
-while true; do
-    show_menu
-done
         *) echo -e "    ${RED}✗ Неверный выбор${NC}"; sleep 1 ;;
     esac
 }
