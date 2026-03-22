@@ -20,7 +20,7 @@ NC=$'\033[0m'
 MUTED=$'\033[38;5;67m'
 
 # ──────────────────────────────────────────────
-#  Spinner — через \r, без мусора
+#  Spinner
 # ──────────────────────────────────────────────
 _spinner_msg=""
 
@@ -105,7 +105,7 @@ arrow_menu() {
 }
 
 # ──────────────────────────────────────────────
-#  Вспомогательные функции
+#  Утилиты
 # ──────────────────────────────────────────────
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -134,9 +134,20 @@ validate_port() {
 check_glider_installed() { [ -f "$BINARY_PATH" ]; }
 
 get_current_version() {
-    check_glider_installed \
-        && ($BINARY_PATH -help 2>&1 | grep -o "glider [0-9.]*" | awk '{print $2}' || echo "$VERSION") \
-        || echo "—"
+    if check_glider_installed; then
+        local v
+        v=$("$BINARY_PATH" -help 2>&1 | grep -o "glider [0-9.]*" | awk '{print $2}')
+        echo "${v:-$VERSION}"
+    else
+        echo "—"
+    fi
+}
+
+copy_binary() {
+    local src
+    src=$(find /tmp -maxdepth 3 -name 'glider' -type f ! -path '*.tar*' 2>/dev/null | head -1)
+    [ -z "$src" ] && return 1
+    cp "$src" "$BINARY_PATH" && chmod +x "$BINARY_PATH"
 }
 
 prompt()  { echo -ne "\n  ${DIM}$1${NC} "; }
@@ -155,16 +166,6 @@ check_port_used() {
     command -v ss      >/dev/null 2>&1 && ss -tuln      | grep -q ":${port} " && return 0
     command -v netstat >/dev/null 2>&1 && netstat -tuln | grep -q ":${port} " && return 0
     return 1
-}
-
-# ──────────────────────────────────────────────
-#  Надёжное копирование бинарника
-# ──────────────────────────────────────────────
-copy_binary() {
-    local src
-    src=$(find /tmp -maxdepth 3 -name 'glider' -type f ! -path '*.tar*' 2>/dev/null | head -1)
-    [ -z "$src" ] && return 1
-    cp "$src" "$BINARY_PATH" && chmod +x "$BINARY_PATH"
 }
 
 # ──────────────────────────────────────────────
@@ -263,7 +264,7 @@ install_glider() {
     if ! check_glider_installed; then
         echo ""
         echo -e "  ${RED}${BOLD}✗  Ошибка установки бинарного файла${NC}"
-        echo -e "  ${DIM}Попробуйте запустить вручную: wget ... && tar ...${NC}"
+        echo -e "  ${DIM}Попробуйте вручную: wget && tar -xzf${NC}"
         pause; return
     fi
 
@@ -307,7 +308,6 @@ EOF
     run_with_spinner "Регистрация службы..."    systemctl daemon-reload
     run_with_spinner "Включение автозапуска..." systemctl enable glider
     run_with_spinner "Запуск службы..."         systemctl start glider
-
     sleep 2
     echo ""
 
@@ -342,17 +342,22 @@ EOF
 #  Обновление Glider
 # ──────────────────────────────────────────────
 update_glider() {
-    section "Обновление Glider"
+    local cur_ver
+    cur_ver=$(get_current_version)
 
     if ! check_glider_installed; then
+        section "Обновление Glider"
         echo -e "  ${YELLOW}Glider не установлен.${NC}"; pause; return
     fi
 
-    echo -e "  ${DIM}Текущая версия:${NC} $(get_current_version)"
-    echo -e "  ${DIM}Новая версия:  ${NC} $VERSION"
-    prompt "Продолжить? (y/n):"; read CONFIRM
-    [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && return
-    echo ""
+    arrow_menu "Обновление Glider" \
+        "Обновить до v${VERSION}	— текущая: v${cur_ver}" \
+        "← Назад	"
+
+    [ "$ARROW_CHOICE" -ne 0 ] && return
+
+    section "Обновление Glider"
+    echo -e "  ${DIM}${cur_ver}  →  ${NC}${WHITE}${VERSION}${NC}\n"
 
     run_with_spinner "Остановка службы..."   systemctl stop glider
     run_with_spinner "Бэкап конфигурации..." cp "$CONFIG_FILE" /tmp/glider.conf.backup
@@ -369,20 +374,26 @@ update_glider() {
         run_with_spinner "Копирование бинарника..." copy_binary
     else
         echo -e "\n  ${RED}✗  Ошибка скачивания${NC}"
-        systemctl start glider > /dev/null 2>&1
+        run_with_spinner "Восстановление службы..." systemctl start glider
         pause; return
     fi
 
     run_with_spinner "Восстановление конфига..." cp /tmp/glider.conf.backup "$CONFIG_FILE"
     run_with_spinner "Перезагрузка systemd..."   systemctl daemon-reload
     run_with_spinner "Запуск службы..."          systemctl start glider
-    sleep 2; echo ""
+    sleep 2
+    echo ""
+
+    local new_ver
+    new_ver=$(get_current_version)
 
     if systemctl is-active --quiet glider; then
-        echo -e "  ${GREEN}${BOLD}✓  Обновлено до $(get_current_version)${NC}"
+        echo -e "  ${GREEN}${BOLD}✓  Обновлено до v${new_ver}${NC}"
     else
         echo -e "  ${RED}${BOLD}✗  Служба не запустилась после обновления${NC}"
-        echo -e "  ${MUTED}journalctl -u glider -n 20 --no-pager${NC}"
+        echo -e "  ${DIM}────────────────────────────────${NC}"
+        journalctl -u glider -n 10 --no-pager 2>/dev/null | sed 's/^/  /'
+        echo -e "  ${DIM}────────────────────────────────${NC}"
     fi
     pause
 }
@@ -492,8 +503,13 @@ manage_users() {
                     echo -e "\n  ${RED}✗ Ошибка${NC}"; sleep 2; continue
                 }
                 [[ $del_line =~ mixed://([^:]+): ]] && del_user="${BASH_REMATCH[1]}" || del_user="noauth"
-                prompt "Удалить '${del_user}' (порт ${del_port})? (y/n):"; read CONFIRM
-                [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && continue
+
+                arrow_menu "Удалить пользователя?" \
+                    "Да, удалить '${del_user}'	— порт ${del_port}" \
+                    "Нет	— вернуться назад"
+                [ "$ARROW_CHOICE" -ne 0 ] && continue
+
+                section "Удалить пользователя"
                 echo ""
                 run_with_spinner "Удаление из конфига..." sed -i "/^listen=.*:${del_port}/d" "$CONFIG_FILE"
                 run_with_spinner "Перезапуск службы..."   systemctl restart glider || true
@@ -512,38 +528,49 @@ manage_users() {
 #  Обновление скрипта
 # ──────────────────────────────────────────────
 update_script() {
+    arrow_menu "Обновление скрипта" \
+        "Загрузить последнюю версию	— текущий файл будет заменён" \
+        "← Назад	"
+
+    [ "$ARROW_CHOICE" -ne 0 ] && return
+
     section "Обновление скрипта"
-    prompt "Загрузить последнюю версию? (y/n):"; read CONFIRM
-    [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && return
     echo ""
 
+    local TEMP_SCRIPT
     TEMP_SCRIPT=$(mktemp)
     run_with_spinner "Скачивание новой версии..." wget -q "$SCRIPT_URL" -O "$TEMP_SCRIPT"
+
     if [ ! -s "$TEMP_SCRIPT" ]; then
         echo -e "\n  ${RED}✗  Файл пуст или не скачался${NC}"
         rm -f "$TEMP_SCRIPT"; pause; return
     fi
-    run_with_spinner "Резервная копия..." cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup"
-    run_with_spinner "Установка..."       bash -c "cp $TEMP_SCRIPT $SCRIPT_PATH && chmod +x $SCRIPT_PATH"
+
+    run_with_spinner "Резервная копия..."  cp "$SCRIPT_PATH" "${SCRIPT_PATH}.backup"
+    run_with_spinner "Установка..."        bash -c "cp $TEMP_SCRIPT $SCRIPT_PATH && chmod +x $SCRIPT_PATH"
     rm -f "$TEMP_SCRIPT"
 
     echo -e "\n  ${GREEN}✓  Скрипт обновлён. Перезапуск...${NC}"
-    sleep 2; exec "$SCRIPT_PATH" "$@"
+    sleep 2
+    exec "$SCRIPT_PATH" "$@"
 }
 
 # ──────────────────────────────────────────────
 #  Удаление Glider
 # ──────────────────────────────────────────────
 remove_glider() {
-    section "Удалить Glider"
-
     if ! check_glider_installed; then
+        section "Удалить Glider"
         echo -e "  ${YELLOW}Glider не установлен.${NC}"; pause; return
     fi
 
-    echo -e "  ${RED}Все данные и пользователи будут удалены!${NC}"
-    prompt "Вы уверены? (y/n):"; read CONFIRM
-    [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]] && return
+    arrow_menu "Удалить Glider?" \
+        "Да, удалить полностью	— бинарник, конфиг, служба" \
+        "Нет	— вернуться в меню"
+
+    [ "$ARROW_CHOICE" -ne 0 ] && return
+
+    section "Удалить Glider"
     echo ""
 
     run_with_spinner "Остановка службы..."        systemctl stop glider
