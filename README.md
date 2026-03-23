@@ -1,19 +1,6 @@
-text
 # GliderProxy Manager
 
 <div align="center">
-
-GliderProxy | ● running v0.16.4
-────────────────────────────────
-
-► Установить Glider — скачать и настроить прокси-сервер
-Обновить Glider — установить новую версию
-Пользователи — управление доступом
-Обновить скрипт — загрузить последнюю версию менеджера
-Удалить Glider — полное удаление
-Выход
-
-text
 
 **Интерактивный bash-менеджер для [Glider](https://github.com/nadoo/glider) — быстрого HTTP/SOCKS5 прокси-сервера**
 
@@ -42,23 +29,35 @@ text
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh)
-Или установить как постоянную команду glider:
+```
 
-bash
+Или установить как постоянную команду `glider`:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh \
   -o /usr/local/bin/glider-manager && chmod +x /usr/local/bin/glider-manager
 ln -sf /usr/local/bin/glider-manager /usr/local/bin/glider
 glider
-Требуются права root (sudo)
+```
 
-Требования
-Зависимость	Версия	Примечание
-bash	≥ 4.0	предустановлен в большинстве дистрибутивов
-systemd	любая	для управления службой
-wget / curl	любая	для скачивания бинарника
-tar	любая	для распаковки архива
-Установка — пример вывода
-text
+> Требуются права **root** (`sudo`)
+
+---
+
+## Требования
+
+| Зависимость | Версия | Примечание |
+|-------------|--------|------------|
+| bash | ≥ 4.0 | предустановлен в большинстве дистрибутивов |
+| systemd | любая | для управления службой |
+| wget / curl | любая | для скачивания бинарника |
+| tar | любая | для распаковки архива |
+
+---
+
+## Установка — пример вывода
+
+```
   Установка Glider
   ────────────────────────────────
 
@@ -83,16 +82,26 @@ text
 
   HTTP    http://myuser:mypassword@45.151.182.221:55555
   SOCKS5  socks5://myuser:mypassword@45.151.182.221:55555
-Структура файлов
-text
+```
+
+---
+
+## Структура файлов
+
+```
 /usr/local/bin/glider-bin            — бинарный файл Glider
 /usr/local/bin/glider-manager        — скрипт менеджера
 /etc/glider/glider.conf              — конфигурация прокси
 /etc/systemd/system/glider.service   — systemd-юнит
-Конфигурация
-Файл /etc/glider/glider.conf создаётся автоматически. Пример:
+```
 
-text
+---
+
+## Конфигурация
+
+Файл `/etc/glider/glider.conf` создаётся автоматически. Пример:
+
+```ini
 verbose=False
 
 listen=mixed://user:password@:55555
@@ -104,17 +113,25 @@ checkinterval=30
 checktimeout=10
 
 strategy=rr
-Управление службой вручную
-bash
+```
+
+---
+
+## Управление службой вручную
+
+```bash
 systemctl status glider      # статус
 systemctl restart glider     # перезапуск
 systemctl stop glider        # остановка
 journalctl -u glider -f      # логи в реальном времени
-Лицензия
-MIT © thekhabaroff
+```
 
-text
-undefined
+---
+
+## Лицензия
+
+MIT © [thekhabaroff](https://github.com/thekhabaroff)
+
 
 ```bash
 sudo bash -c 'wget -q https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh -O /usr/local/bin/glider-manager && chmod +x /usr/local/bin/glider-manager && mv /usr/local/bin/glider /usr/local/bin/glider-bin 2>/dev/null || true && ln -sf /usr/local/bin/glider-manager /usr/local/bin/glider && sed -i "s|ExecStart=/usr/local/bin/glider |ExecStart=/usr/local/bin/glider-bin |g" /etc/systemd/system/glider.service 2>/dev/null || true && systemctl daemon-reload 2>/dev/null && systemctl restart glider 2>/dev/null || true' && sudo glider
