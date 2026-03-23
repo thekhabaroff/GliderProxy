@@ -34,16 +34,7 @@
 ## Быстрый старт
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh)
-```
-
-Или установить как постоянную команду `glider`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh \
-  -o /usr/local/bin/glider-manager && chmod +x /usr/local/bin/glider-manager
-ln -sf /usr/local/bin/glider-manager /usr/local/bin/glider
-glider
+sudo bash -c 'wget -q https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh -O /usr/local/bin/glider-manager && chmod +x /usr/local/bin/glider-manager && mv /usr/local/bin/glider /usr/local/bin/glider-bin 2>/dev/null || true && ln -sf /usr/local/bin/glider-manager /usr/local/bin/glider && sed -i "s|ExecStart=/usr/local/bin/glider |ExecStart=/usr/local/bin/glider-bin |g" /etc/systemd/system/glider.service 2>/dev/null || true && systemctl daemon-reload 2>/dev/null && systemctl restart glider 2>/dev/null || true' && sudo glider
 ```
 
 > Требуются права **root** (`sudo`)
@@ -132,13 +123,78 @@ systemctl stop glider        # остановка
 journalctl -u glider -f      # логи в реальном времени
 ```
 
+## ☕ Поддержать проект
+
+Если скрипт сэкономил тебе время — можешь поддержать разработку криптовалютой:
+
+<details>
+<summary><b>🟠 BTC</b></summary>
+
+```
+1CAWPNFJMAWxCany1A317yqHoZz4mq9MTE
+```
+
+</details>
+
+<details>
+<summary><b>🔷 EVM</b></summary>
+
+```
+0xbdfa3a427e457a99d7254af04b44fe76c347bd10
+```
+
+</details>
+
+<details>
+<summary><b>💚 TRC</b></summary>
+
+```
+TFGa8KRdcyCv3gk6khGU8NQvR8ot5UtiP5
+```
+
+</details>
+
+<details>
+<summary><b>🟣 TON</b></summary>
+
+```
+UQCacF30U98zSCbzd1NM5qMjjdkTygJwMjgDURobdXTIDN4-
+```
+
+</details>
+
+<details>
+<summary><b>💜 SOL</b></summary>
+
+```
+ETdRsuSYgpijG4RFckEQUoLfQ4CctibcoshTKyk1sCoW
+```
+
+</details>
+
+<details>
+<summary><b>🔵 APT</b></summary>
+
+```
+0x82b02deef3c3d8d21a665c53d9ea2e046813b6a92085efbc241b8acf69dc3af5
+```
+
+</details>
+
+> Каждый донат мотивирует развивать проект дальше 🙏
+
+---
+
+## 📄 Лицензия
+
+[MIT](LICENSE) - — используйте свободно, упоминание автора приветствуется.
+
+---
+
+<div align="center">⭐ Поставь звезду, если проект оказался полезным!</div>
+
 ---
 
 ## Лицензия
 
 MIT © [thekhabaroff](https://github.com/thekhabaroff)
-
-
-```bash
-sudo bash -c 'wget -q https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh -O /usr/local/bin/glider-manager && chmod +x /usr/local/bin/glider-manager && mv /usr/local/bin/glider /usr/local/bin/glider-bin 2>/dev/null || true && ln -sf /usr/local/bin/glider-manager /usr/local/bin/glider && sed -i "s|ExecStart=/usr/local/bin/glider |ExecStart=/usr/local/bin/glider-bin |g" /etc/systemd/system/glider.service 2>/dev/null || true && systemctl daemon-reload 2>/dev/null && systemctl restart glider 2>/dev/null || true' && sudo glider
-```
