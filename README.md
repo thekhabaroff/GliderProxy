@@ -13,7 +13,7 @@
 ![Requires](https://img.shields.io/badge/Requires-Root%20%2F%20Sudo-red?style=for-the-badge&logo=linux&logoColor=white)
 ![Stars](https://img.shields.io/github/stars/thekhabaroff/GliderProxy?style=for-the-badge)
 ![Last Commit](https://img.shields.io/github/last-commit/thekhabaroff/GliderProxy?style=for-the-badge)
-![Issues](https://img.shields.io/github/issues/thekhabaroff/GliderProxy?style=for-the-badge)
+![Issues](https://img.shields.io/github/issues/thekhabaroff/GliderProxy?style=for-the-badge) </div>
 
 </div>
 
