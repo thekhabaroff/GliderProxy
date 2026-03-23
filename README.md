@@ -4,10 +4,15 @@
 
 **Интерактивный bash-менеджер для [Glider](https://github.com/nadoo/glider) — быстрого HTTP/SOCKS5 прокси-сервера**
 
-![Platform](https://img.shields.io/badge/platform-Linux-blue?style=flat-square)
-![Shell](https://img.shields.io/badge/shell-bash-green?style=flat-square)
-![Glider](https://img.shields.io/badge/glider-v0.16.4-cyan?style=flat-square)
-![License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)
+<div align="center">
+![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white)
+![Linux](https://img.shields.io/badge/Platform-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
+![Glider](https://img.shields.io/badge/Glider-v0.16.4-00BFFF?style=for-the-badge&logo=probot&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
+![Requires](https://img.shields.io/badge/Requires-Root%20%2F%20Sudo-red?style=for-the-badge&logo=linux&logoColor=white)
+![Stars](https://img.shields.io/github/stars/thekhabaroff/GliderProxy?style=for-the-badge)
+![Last Commit](https://img.shields.io/github/last-commit/thekhabaroff/GliderProxy?style=for-the-badge)
+![Issues](https://img.shields.io/github/issues/thekhabaroff/GliderProxy?style=for-the-badge)
 
 </div>
 
