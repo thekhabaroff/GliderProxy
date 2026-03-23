@@ -5,6 +5,7 @@
 **Интерактивный bash-менеджер для [Glider](https://github.com/nadoo/glider) — быстрого HTTP/SOCKS5 прокси-сервера**
 
 <div align="center">
+  
 ![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white)
 ![Linux](https://img.shields.io/badge/Platform-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)
 ![Glider](https://img.shields.io/badge/Glider-v0.16.4-00BFFF?style=for-the-badge&logo=probot&logoColor=white)
