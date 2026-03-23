@@ -19,32 +19,29 @@ ITALIC=$'\033[3m'
 NC=$'\033[0m'
 MUTED=$'\033[38;5;67m'
 
-_spinner_msg=""
-
-spinner() {
-    local pid=$1 i=0
+run_with_spinner() {
+    local msg="$1"; shift
     local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-    printf "  ${DIM}%-45s${NC} " "$_spinner_msg"
+    local i=0
+
+    ("$@") > /dev/null 2>&1 &
+    local pid=$!
+
     while kill -0 "$pid" 2>/dev/null; do
-        printf "${CYAN}%s${NC}\b" "${frames[$i]}"
+        printf "\r  ${CYAN}%s${NC}  ${DIM}%s${NC}" "${frames[$i]}" "$msg"
         i=$(( (i+1) % 10 ))
         sleep 0.1
     done
-}
 
-run_with_spinner() {
-    local msg=$1; shift
-    _spinner_msg="$msg"
-    ("$@") > /dev/null 2>&1 &
-    local pid=$!
-    spinner $pid
-    wait $pid
+    wait "$pid"
     local s=$?
+
     if [ $s -eq 0 ]; then
-        printf "${GREEN}✓${NC}\n"
+        printf "\r  ${GREEN}✓${NC}  ${DIM}%s${NC}\n" "$msg"
     else
-        printf "${RED}✗${NC}\n"
+        printf "\r  ${RED}✗${NC}  ${DIM}%s${NC}\n" "$msg"
     fi
+
     return $s
 }
 
