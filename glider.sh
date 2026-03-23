@@ -24,8 +24,9 @@ _spinner_msg=""
 spinner() {
     local pid=$1 i=0
     local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    printf "  ${DIM}%-45s${NC} " "$_spinner_msg"
     while kill -0 "$pid" 2>/dev/null; do
-        printf "\r  ${DIM}%-45s${NC} ${CYAN}%s${NC} " "$_spinner_msg" "${frames[$i]}"
+        printf "${CYAN}%s${NC}\b" "${frames[$i]}"
         i=$(( (i+1) % 10 ))
         sleep 0.1
     done
@@ -40,9 +41,9 @@ run_with_spinner() {
     wait $pid
     local s=$?
     if [ $s -eq 0 ]; then
-        printf "\r  ${DIM}%-45s${NC} ${GREEN}✓${NC}\n" "$msg"
+        printf "${GREEN}✓${NC}\n"
     else
-        printf "\r  ${DIM}%-45s${NC} ${RED}✗${NC}\n" "$msg"
+        printf "${RED}✗${NC}\n"
     fi
     return $s
 }
@@ -193,6 +194,39 @@ list_users() {
 
     [ $found -eq 0 ] && echo -e "  ${DIM}Пользователей не найдено${NC}"
     echo ""
+}
+
+pick_user() {
+    local title="$1"
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "  ${DIM}Нет пользователей${NC}"; return 1
+    fi
+
+    local labels=()
+    local ports=()
+
+    while IFS= read -r line; do
+        if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+            labels+=("${BASH_REMATCH[1]}	порт ${BASH_REMATCH[3]}")
+            ports+=("${BASH_REMATCH[3]}")
+        elif [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://:([0-9]+) ]]; then
+            labels+=("(без авторизации)	порт ${BASH_REMATCH[1]}")
+            ports+=("${BASH_REMATCH[1]}")
+        fi
+    done < "$CONFIG_FILE"
+
+    [ ${#labels[@]} -eq 0 ] && { echo -e "  ${DIM}Нет пользователей${NC}"; return 1; }
+
+    labels+=("← Назад	")
+    arrow_menu "$title" "${labels[@]}"
+
+    if [ "$ARROW_CHOICE" -ge "${#ports[@]}" ]; then
+        USER_SEL_PORT=""
+        return 1
+    fi
+
+    USER_SEL_PORT="${ports[$ARROW_CHOICE]}"
+    return 0
 }
 
 install_glider() {
@@ -437,12 +471,14 @@ manage_users() {
             1)  [ "$user_count" -eq 0 ] && {
                     echo -e "\n  ${YELLOW}Нет пользователей${NC}"; sleep 2; continue
                 }
-                section "Изменить пользователя"; list_users
-                prompt "Порт пользователя:"; read target_port
-                [ -z "$target_port" ] && continue
+
+                pick_user "Выберите пользователя" || continue
+                local target_port="$USER_SEL_PORT"
+
                 local user_num; user_num=$(grep -n ":${target_port}" "$CONFIG_FILE" | cut -d: -f1)
                 [ -z "$user_num" ] && { echo -e "\n  ${RED}✗ Не найден${NC}"; sleep 2; continue; }
                 local line; line=$(sed -n "${user_num}p" "$CONFIG_FILE")
+
                 if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
                     old_username="${BASH_REMATCH[1]}"
                     old_password="${BASH_REMATCH[2]}"
@@ -450,7 +486,10 @@ manage_users() {
                 else
                     echo -e "\n  ${RED}✗ Ошибка чтения${NC}"; sleep 2; continue
                 fi
-                echo ""
+
+                section "Изменить пользователя"
+                echo -e "  ${DIM}Редактирование:${NC} ${WHITE}${old_username}${NC}  ${DIM}порт ${NC}${CYAN}${old_port}${NC}\n"
+
                 prompt "Новый логин [${old_username}]:";       read new_username
                 new_username=${new_username:-$old_username}
                 validate_credentials "$new_username" "Логин"  || { sleep 2; continue; }
@@ -467,26 +506,21 @@ manage_users() {
                 run_with_spinner "Сохранение конфига..." \
                     sed -i "s|^listen=.*:${old_port}$|listen=mixed://${new_username}:${new_password}@:${new_port}|" "$CONFIG_FILE"
                 run_with_spinner "Перезапуск службы..." systemctl restart glider || true
-                sleep 2
+                sleep 2; echo ""
                 systemctl is-active --quiet glider \
-                    && echo -e "\n  ${GREEN}✓  Изменено${NC}" \
-                    || echo -e "\n  ${RED}✗  Ошибка перезапуска${NC}"
+                    && echo -e "  ${GREEN}✓  Изменено${NC}" \
+                    || echo -e "  ${RED}✗  Ошибка перезапуска${NC}"
                 pause ;;
 
             2)  [ "$user_count" -le 1 ] && {
                     echo -e "\n  ${RED}✗ Нельзя удалить последнего пользователя${NC}"
                     sleep 2; continue
                 }
-                section "Удалить пользователя"; list_users
-                prompt "Номер пользователя:"; read user_num
-                { ! [[ "$user_num" =~ ^[0-9]+$ ]] || \
-                  [ "$user_num" -lt 1 ] || [ "$user_num" -gt "$user_count" ]; } && {
-                    echo -e "\n  ${RED}✗ Неверный номер${NC}"; sleep 2; continue
-                }
-                local del_line; del_line=$(grep "^[[:space:]]*listen=" "$CONFIG_FILE" | sed -n "${user_num}p")
-                [[ $del_line =~ :([0-9]+)[[:space:]]*$ ]] && del_port="${BASH_REMATCH[1]}" || {
-                    echo -e "\n  ${RED}✗ Ошибка${NC}"; sleep 2; continue
-                }
+
+                pick_user "Выберите пользователя для удаления" || continue
+                local del_port="$USER_SEL_PORT"
+
+                local del_line; del_line=$(grep "listen=.*:${del_port}" "$CONFIG_FILE" | head -1)
                 [[ $del_line =~ mixed://([^:]+): ]] && del_user="${BASH_REMATCH[1]}" || del_user="noauth"
 
                 arrow_menu "Удалить пользователя?" \
@@ -498,10 +532,10 @@ manage_users() {
                 echo ""
                 run_with_spinner "Удаление из конфига..." sed -i "/^listen=.*:${del_port}/d" "$CONFIG_FILE"
                 run_with_spinner "Перезапуск службы..."   systemctl restart glider || true
-                sleep 2
+                sleep 2; echo ""
                 systemctl is-active --quiet glider \
-                    && echo -e "\n  ${GREEN}✓  Удалено${NC}" \
-                    || echo -e "\n  ${RED}✗  Ошибка перезапуска${NC}"
+                    && echo -e "  ${GREEN}✓  Удалено${NC}" \
+                    || echo -e "  ${RED}✗  Ошибка перезапуска${NC}"
                 pause ;;
 
             3) return ;;
