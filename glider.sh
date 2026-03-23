@@ -19,9 +19,6 @@ ITALIC=$'\033[3m'
 NC=$'\033[0m'
 MUTED=$'\033[38;5;67m'
 
-# ──────────────────────────────────────────────
-#  Spinner
-# ──────────────────────────────────────────────
 _spinner_msg=""
 
 spinner() {
@@ -50,9 +47,6 @@ run_with_spinner() {
     return $s
 }
 
-# ──────────────────────────────────────────────
-#  Навигация стрелками
-# ──────────────────────────────────────────────
 arrow_menu() {
     local title="$1"; shift
     local items=("$@")
@@ -104,9 +98,6 @@ arrow_menu() {
     ARROW_CHOICE=$selected
 }
 
-# ──────────────────────────────────────────────
-#  Утилиты
-# ──────────────────────────────────────────────
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         clear; echo ""
@@ -145,7 +136,11 @@ get_current_version() {
 
 copy_binary() {
     local src
-    src=$(find /tmp -maxdepth 3 -name 'glider' -type f ! -path '*.tar*' 2>/dev/null | head -1)
+    src=$(find /tmp -maxdepth 4 -name 'glider' -type f 2>/dev/null | head -1)
+    if [ -z "$src" ]; then
+        src=$(find /tmp -maxdepth 4 -name 'glider*' -type f \
+            ! -name '*.tar*' ! -name '*.gz' ! -name '*.deb' 2>/dev/null | head -1)
+    fi
     [ -z "$src" ] && return 1
     cp "$src" "$BINARY_PATH" && chmod +x "$BINARY_PATH"
 }
@@ -168,9 +163,6 @@ check_port_used() {
     return 1
 }
 
-# ──────────────────────────────────────────────
-#  Список пользователей
-# ──────────────────────────────────────────────
 list_users() {
     if [ ! -f "$CONFIG_FILE" ]; then
         echo -e "  ${DIM}Нет пользователей${NC}\n"; return
@@ -199,9 +191,6 @@ list_users() {
     echo ""
 }
 
-# ──────────────────────────────────────────────
-#  Установка Glider
-# ──────────────────────────────────────────────
 install_glider() {
     section "Установка Glider"
 
@@ -264,7 +253,8 @@ install_glider() {
     if ! check_glider_installed; then
         echo ""
         echo -e "  ${RED}${BOLD}✗  Ошибка установки бинарного файла${NC}"
-        echo -e "  ${DIM}Попробуйте вручную: wget && tar -xzf${NC}"
+        echo -e "  ${DIM}Найдено в /tmp:${NC}"
+        find /tmp -maxdepth 4 -type f 2>/dev/null | sed 's/^/    /'
         pause; return
     fi
 
@@ -297,9 +287,6 @@ Type=simple
 ExecStart=$BINARY_PATH -config $CONFIG_FILE
 Restart=on-failure
 RestartSec=5
-User=nobody
-StandardOutput=null
-StandardError=null
 
 [Install]
 WantedBy=multi-user.target
@@ -338,9 +325,6 @@ EOF
     pause
 }
 
-# ──────────────────────────────────────────────
-#  Обновление Glider
-# ──────────────────────────────────────────────
 update_glider() {
     local cur_ver
     cur_ver=$(get_current_version)
@@ -398,9 +382,6 @@ update_glider() {
     pause
 }
 
-# ──────────────────────────────────────────────
-#  Управление пользователями
-# ──────────────────────────────────────────────
 manage_users() {
     while true; do
         section "Пользователи"
@@ -524,9 +505,6 @@ manage_users() {
     done
 }
 
-# ──────────────────────────────────────────────
-#  Обновление скрипта
-# ──────────────────────────────────────────────
 update_script() {
     arrow_menu "Обновление скрипта" \
         "Загрузить последнюю версию	— текущий файл будет заменён" \
@@ -555,9 +533,6 @@ update_script() {
     exec "$SCRIPT_PATH" "$@"
 }
 
-# ──────────────────────────────────────────────
-#  Удаление Glider
-# ──────────────────────────────────────────────
 remove_glider() {
     if ! check_glider_installed; then
         section "Удалить Glider"
@@ -583,27 +558,78 @@ remove_glider() {
 }
 
 # ──────────────────────────────────────────────
-#  Главное меню
+#  Главное меню — собственный рендер,
+#  статус собирается ДО отрисовки
 # ──────────────────────────────────────────────
 show_menu() {
-    local status_str
+    local ver svc status_line
+
     if check_glider_installed; then
-        local ver; ver=$(get_current_version)
-        local svc; svc=$(systemctl is-active glider 2>/dev/null || echo "stopped")
-        [ "$svc" == "active" ] \
-            && status_str="${GREEN}● running${NC}  v${ver}" \
-            || status_str="${RED}● ${svc}${NC}  v${ver}"
+        ver=$(get_current_version)
+        svc=$(systemctl is-active glider 2>/dev/null)
+        svc=${svc:-stopped}
+        if [ "$svc" == "active" ]; then
+            status_line="${CYAN_BOLD}GliderProxy${NC}  ${DIM}|${NC}  ${GREEN}● running${NC}  ${DIM}v${ver}${NC}"
+        else
+            status_line="${CYAN_BOLD}GliderProxy${NC}  ${DIM}|${NC}  ${RED}● ${svc}${NC}  ${DIM}v${ver}${NC}"
+        fi
     else
-        status_str="${DIM}не установлен${NC}"
+        status_line="${CYAN_BOLD}GliderProxy${NC}  ${DIM}|${NC}  ${DIM}не установлен${NC}"
     fi
 
-    arrow_menu "$(echo -e "GliderProxy  ${DIM}|${NC}  ${status_str}")" \
-        "Установить Glider	— скачать и настроить прокси-сервер" \
-        "Обновить Glider	— установить новую версию" \
-        "Пользователи	— управление доступом" \
-        "Обновить скрипт	— загрузить последнюю версию менеджера" \
-        "Удалить Glider	— полное удаление" \
+    local items=(
+        "Установить Glider	— скачать и настроить прокси-сервер"
+        "Обновить Glider	— установить новую версию"
+        "Пользователи	— управление доступом"
+        "Обновить скрипт	— загрузить последнюю версию менеджера"
+        "Удалить Glider	— полное удаление"
         "Выход	"
+    )
+    local count=${#items[@]} selected=0
+
+    tput civis
+
+    _render_main() {
+        clear
+        echo ""
+        echo -e "  ${status_line}"
+        echo -e "  ${DIM}────────────────────────────────${NC}"
+        echo ""
+        for i in "${!items[@]}"; do
+            local raw="${items[$i]}"
+            local label="${raw%%	*}"
+            local desc=""
+            [[ "$raw" == *$'\t'* ]] && desc="${raw#*	}"
+            if [ "$i" -eq "$selected" ]; then
+                [ -n "$desc" ] \
+                    && echo -e "  ${CYAN_BOLD}► ${BOLD}${label}${NC}  ${ITALIC}${MUTED}${desc}${NC}" \
+                    || echo -e "  ${CYAN_BOLD}► ${BOLD}${label}${NC}"
+            else
+                [ -n "$desc" ] \
+                    && echo -e "  ${MUTED}  ${label}${NC}  ${DIM}${desc}${NC}" \
+                    || echo -e "  ${MUTED}  ${label}${NC}"
+            fi
+        done
+        echo ""
+        echo -e "  ${DIM}↑↓ — навигация   Enter — выбор${NC}"
+    }
+
+    while true; do
+        _render_main
+        IFS= read -rsn1 key
+        if [[ "$key" == $'\x1b' ]]; then
+            read -rsn2 -t 0.1 rest
+            case "$rest" in
+                '[A') ((selected--)); [ "$selected" -lt 0 ] && selected=$((count-1)) ;;
+                '[B') ((selected++)); [ "$selected" -ge "$count" ] && selected=0 ;;
+            esac
+        elif [[ "$key" == "" || "$key" == $'\n' ]]; then
+            break
+        fi
+    done
+
+    tput cnorm
+    ARROW_CHOICE=$selected
 
     case $ARROW_CHOICE in
         0) install_glider ;;
