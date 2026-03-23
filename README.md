@@ -192,9 +192,3 @@ ETdRsuSYgpijG4RFckEQUoLfQ4CctibcoshTKyk1sCoW
 ---
 
 <div align="center">⭐ Поставь звезду, если проект оказался полезным!</div>
-
----
-
-## Лицензия
-
-MIT © [thekhabaroff](https://github.com/thekhabaroff)
