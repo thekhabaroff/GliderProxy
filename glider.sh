@@ -127,10 +127,14 @@ check_glider_installed() { [ -f "$BINARY_PATH" ]; }
 get_current_version() {
     if check_glider_installed; then
         local v
-        v=$("$BINARY_PATH" -help 2>&1 | grep -o "glider [0-9.]*" | awk '{print $2}')
-        echo "${v:-$VERSION}"
+        v=$(  "$BINARY_PATH" -help 2>&1 \
+            | grep -o "glider [0-9][0-9.]*" \
+            | awk '{print $2}' \
+            | tr -d '[:space:]' \
+            | head -1 )
+        printf '%s' "${v:-$VERSION}"
     else
-        echo "—"
+        printf '%s' "—"
     fi
 }
 
@@ -326,13 +330,13 @@ EOF
 }
 
 update_glider() {
-    local cur_ver
-    cur_ver=$(get_current_version)
-
     if ! check_glider_installed; then
         section "Обновление Glider"
         echo -e "  ${YELLOW}Glider не установлен.${NC}"; pause; return
     fi
+
+    local cur_ver
+    cur_ver=$(get_current_version | tr -d '[:space:]')
 
     arrow_menu "Обновление Glider" \
         "Обновить до v${VERSION}	— текущая: v${cur_ver}" \
@@ -341,7 +345,7 @@ update_glider() {
     [ "$ARROW_CHOICE" -ne 0 ] && return
 
     section "Обновление Glider"
-    echo -e "  ${DIM}${cur_ver}  →  ${NC}${WHITE}${VERSION}${NC}\n"
+    echo -e "  ${DIM}v${cur_ver}  →  ${NC}${WHITE}v${VERSION}${NC}\n"
 
     run_with_spinner "Остановка службы..."   systemctl stop glider
     run_with_spinner "Бэкап конфигурации..." cp "$CONFIG_FILE" /tmp/glider.conf.backup
@@ -369,7 +373,7 @@ update_glider() {
     echo ""
 
     local new_ver
-    new_ver=$(get_current_version)
+    new_ver=$(get_current_version | tr -d '[:space:]')
 
     if systemctl is-active --quiet glider; then
         echo -e "  ${GREEN}${BOLD}✓  Обновлено до v${new_ver}${NC}"
@@ -557,16 +561,12 @@ remove_glider() {
     pause
 }
 
-# ──────────────────────────────────────────────
-#  Главное меню — собственный рендер,
-#  статус собирается ДО отрисовки
-# ──────────────────────────────────────────────
 show_menu() {
     local ver svc status_line
 
     if check_glider_installed; then
-        ver=$(get_current_version)
-        svc=$(systemctl is-active glider 2>/dev/null)
+        ver=$(get_current_version | tr -d '[:space:]')
+        svc=$(systemctl is-active glider 2>/dev/null | tr -d '[:space:]')
         svc=${svc:-stopped}
         if [ "$svc" == "active" ]; then
             status_line="${CYAN_BOLD}GliderProxy${NC}  ${DIM}|${NC}  ${GREEN}● running${NC}  ${DIM}v${ver}${NC}"
@@ -641,7 +641,6 @@ show_menu() {
     esac
 }
 
-# ──────────────────────────────────────────────
 check_root
 while true; do
     show_menu
