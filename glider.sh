@@ -6,6 +6,11 @@ BINARY_PATH="/usr/local/bin/glider-bin"
 SCRIPT_PATH="/usr/local/bin/glider-manager"
 SCRIPT_URL="https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh"
 VERSION="0.16.4"
+STATS_DIR="/var/lib/glider-manager/stats"
+STATS_STATE_FILE="${STATS_DIR}/traffic.tsv"
+STATS_ARCHIVE_FILE="${STATS_DIR}/deleted.tsv"
+STATS_IN_CHAIN="GLIDER_STATS_IN"
+STATS_OUT_CHAIN="GLIDER_STATS_OUT"
 
 RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
@@ -122,6 +127,15 @@ validate_port() {
 
 check_glider_installed() { [ -f "$BINARY_PATH" ]; }
 
+run_cli_command() {
+    case "${1:-}" in
+        --sync-stats)
+            sync_config_stats >/dev/null 2>&1 || true
+            exit 0
+            ;;
+    esac
+}
+
 get_current_version() {
     if check_glider_installed; then
         local v
@@ -148,7 +162,7 @@ copy_binary() {
 }
 
 prompt()  { echo -ne "\n  ${DIM}$1${NC} "; }
-pause()   { echo -e "\n\n  ${DIM}Нажмите Enter для продолжения...${NC}"; read; }
+pause()   { echo -e "\n\n  ${DIM}Нажмите Enter для продолжения...${NC}"; read -r; }
 
 section() {
     clear; echo ""
@@ -163,6 +177,268 @@ check_port_used() {
     command -v ss      >/dev/null 2>&1 && ss -tuln      | grep -q ":${port} " && return 0
     command -v netstat >/dev/null 2>&1 && netstat -tuln | grep -q ":${port} " && return 0
     return 1
+}
+
+format_bytes() {
+    local bytes=${1:-0}
+    awk -v b="$bytes" 'BEGIN {
+        split("B KiB MiB GiB TiB PiB", unit)
+        i = 1
+        while (b >= 1024 && i < 6) { b /= 1024; i++ }
+        if (i == 1) printf "%d %s", b, unit[i]
+        else printf "%.2f %s", b, unit[i]
+    }'
+}
+
+ensure_stats_rules() {
+    command -v iptables >/dev/null 2>&1 || return 1
+
+    mkdir -p "$STATS_DIR"
+    touch "$STATS_STATE_FILE"
+
+    iptables -N "$STATS_IN_CHAIN"  2>/dev/null || true
+    iptables -N "$STATS_OUT_CHAIN" 2>/dev/null || true
+
+    iptables -C INPUT  -j "$STATS_IN_CHAIN"  >/dev/null 2>&1 || iptables -I INPUT  1 -j "$STATS_IN_CHAIN"
+    iptables -C OUTPUT -j "$STATS_OUT_CHAIN" >/dev/null 2>&1 || iptables -I OUTPUT 1 -j "$STATS_OUT_CHAIN"
+}
+
+add_stats_port() {
+    local port="$1" proto
+    ensure_stats_rules || return 1
+
+    for proto in tcp udp; do
+        iptables -C "$STATS_IN_CHAIN"  -p "$proto" --dport "$port" >/dev/null 2>&1 || \
+            iptables -A "$STATS_IN_CHAIN"  -p "$proto" --dport "$port"
+        iptables -C "$STATS_OUT_CHAIN" -p "$proto" --sport "$port" >/dev/null 2>&1 || \
+            iptables -A "$STATS_OUT_CHAIN" -p "$proto" --sport "$port"
+    done
+
+    ensure_stats_service_hook
+}
+
+remove_stats_port() {
+    local port="$1" proto
+    command -v iptables >/dev/null 2>&1 || return 0
+
+    for proto in tcp udp; do
+        while iptables -D "$STATS_IN_CHAIN"  -p "$proto" --dport "$port" >/dev/null 2>&1; do :; done
+        while iptables -D "$STATS_OUT_CHAIN" -p "$proto" --sport "$port" >/dev/null 2>&1; do :; done
+    done
+}
+
+remove_stats_rules() {
+    command -v iptables >/dev/null 2>&1 || return 0
+
+    while iptables -D INPUT  -j "$STATS_IN_CHAIN"  >/dev/null 2>&1; do :; done
+    while iptables -D OUTPUT -j "$STATS_OUT_CHAIN" >/dev/null 2>&1; do :; done
+    iptables -F "$STATS_IN_CHAIN"  >/dev/null 2>&1 || true
+    iptables -F "$STATS_OUT_CHAIN" >/dev/null 2>&1 || true
+    iptables -X "$STATS_IN_CHAIN"  >/dev/null 2>&1 || true
+    iptables -X "$STATS_OUT_CHAIN" >/dev/null 2>&1 || true
+}
+
+ensure_stats_service_hook() {
+    [ -f "$SERVICE_FILE" ] || return 0
+    grep -q -- "--sync-stats" "$SERVICE_FILE" && return 0
+
+    local tmp
+    tmp=$(mktemp) || return 1
+    awk -v hook="ExecStartPre=-$SCRIPT_PATH --sync-stats" '
+        /^\[Service\]$/ { in_service = 1 }
+        /^\[/ && $0 != "[Service]" { in_service = 0 }
+        in_service && /^ExecStart=/ && !added { print hook; added = 1 }
+        { print }
+    ' "$SERVICE_FILE" > "$tmp" && mv "$tmp" "$SERVICE_FILE"
+
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+get_stats_counter() {
+    local chain="$1" proto="$2" marker="$3" port="$4"
+    local proto_num
+    case "$proto" in
+        tcp) proto_num=6 ;;
+        udp) proto_num=17 ;;
+        *)   proto_num="$proto" ;;
+    esac
+    iptables -L "$chain" -v -x -n 2>/dev/null \
+        | awk -v proto="$proto" -v proto_num="$proto_num" -v marker="$marker" -v port="$port" \
+            '($3 == proto || $4 == proto || $3 == proto_num || $4 == proto_num) && $0 ~ marker port "([^0-9]|$)" { bytes += $2 } END { print bytes + 0 }'
+}
+
+set_stats_state() {
+    local port="$1" in_tcp_total="$2" in_udp_total="$3" out_tcp_total="$4" out_udp_total="$5"
+    local in_tcp_last="$6" in_udp_last="$7" out_tcp_last="$8" out_udp_last="$9" updated="${10}" tmp
+    mkdir -p "$STATS_DIR"
+    tmp=$(mktemp "${STATS_DIR}/traffic.XXXXXX") || return 1
+
+    if [ -f "$STATS_STATE_FILE" ]; then
+        awk -F '\t' -v p="$port" '$1 != p { print }' "$STATS_STATE_FILE" > "$tmp"
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$port" "$in_tcp_total" "$in_udp_total" "$out_tcp_total" "$out_udp_total" \
+        "$in_tcp_last" "$in_udp_last" "$out_tcp_last" "$out_udp_last" "$updated" >> "$tmp"
+    mv "$tmp" "$STATS_STATE_FILE"
+}
+
+read_stats_state() {
+    local port="$1" row
+    local c1 c2 c3 c4 c5 c6 c7 c8 c9 c10
+    STAT_IN_TCP_TOTAL=0
+    STAT_IN_UDP_TOTAL=0
+    STAT_OUT_TCP_TOTAL=0
+    STAT_OUT_UDP_TOTAL=0
+    STAT_IN_TCP_LAST=0
+    STAT_IN_UDP_LAST=0
+    STAT_OUT_TCP_LAST=0
+    STAT_OUT_UDP_LAST=0
+
+    row=$(awk -F '\t' -v p="$port" '$1 == p { line = $0 } END { print line }' "$STATS_STATE_FILE" 2>/dev/null)
+    [ -z "$row" ] && return 0
+
+    IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 <<< "$row"
+    : "${c1:=}"
+    if [ -n "${c10:-}" ]; then
+        STAT_IN_TCP_TOTAL=${c2:-0}
+        STAT_IN_UDP_TOTAL=${c3:-0}
+        STAT_OUT_TCP_TOTAL=${c4:-0}
+        STAT_OUT_UDP_TOTAL=${c5:-0}
+        STAT_IN_TCP_LAST=${c6:-0}
+        STAT_IN_UDP_LAST=${c7:-0}
+        STAT_OUT_TCP_LAST=${c8:-0}
+        STAT_OUT_UDP_LAST=${c9:-0}
+    else
+        STAT_IN_TCP_TOTAL=${c2:-0}
+        STAT_OUT_TCP_TOTAL=${c3:-0}
+        STAT_IN_TCP_LAST=${c4:-0}
+        STAT_OUT_TCP_LAST=${c5:-0}
+    fi
+}
+
+delete_stats_state() {
+    local port="$1" tmp
+    [ -f "$STATS_STATE_FILE" ] || return 0
+    tmp=$(mktemp "${STATS_DIR}/traffic.XXXXXX") || return 1
+    awk -F '\t' -v p="$port" '$1 != p { print }' "$STATS_STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATS_STATE_FILE"
+}
+
+sync_stats_port() {
+    local port="$1" updated
+    local cur_in_tcp cur_in_udp cur_out_tcp cur_out_udp
+    local in_tcp_total in_udp_total out_tcp_total out_udp_total
+    local in_tcp_last in_udp_last out_tcp_last out_udp_last
+
+    add_stats_port "$port" || return 1
+
+    read_stats_state "$port"
+    in_tcp_total=${STAT_IN_TCP_TOTAL:-0}
+    in_udp_total=${STAT_IN_UDP_TOTAL:-0}
+    out_tcp_total=${STAT_OUT_TCP_TOTAL:-0}
+    out_udp_total=${STAT_OUT_UDP_TOTAL:-0}
+    in_tcp_last=${STAT_IN_TCP_LAST:-0}
+    in_udp_last=${STAT_IN_UDP_LAST:-0}
+    out_tcp_last=${STAT_OUT_TCP_LAST:-0}
+    out_udp_last=${STAT_OUT_UDP_LAST:-0}
+
+    cur_in_tcp=$(get_stats_counter "$STATS_IN_CHAIN" "tcp" "dpt:" "$port")
+    cur_in_udp=$(get_stats_counter "$STATS_IN_CHAIN" "udp" "dpt:" "$port")
+    cur_out_tcp=$(get_stats_counter "$STATS_OUT_CHAIN" "tcp" "spt:" "$port")
+    cur_out_udp=$(get_stats_counter "$STATS_OUT_CHAIN" "udp" "spt:" "$port")
+
+    if [ "$cur_in_tcp" -ge "$in_tcp_last" ]; then
+        in_tcp_total=$((in_tcp_total + cur_in_tcp - in_tcp_last))
+    else
+        in_tcp_total=$((in_tcp_total + cur_in_tcp))
+    fi
+
+    if [ "$cur_in_udp" -ge "$in_udp_last" ]; then
+        in_udp_total=$((in_udp_total + cur_in_udp - in_udp_last))
+    else
+        in_udp_total=$((in_udp_total + cur_in_udp))
+    fi
+
+    if [ "$cur_out_tcp" -ge "$out_tcp_last" ]; then
+        out_tcp_total=$((out_tcp_total + cur_out_tcp - out_tcp_last))
+    else
+        out_tcp_total=$((out_tcp_total + cur_out_tcp))
+    fi
+
+    if [ "$cur_out_udp" -ge "$out_udp_last" ]; then
+        out_udp_total=$((out_udp_total + cur_out_udp - out_udp_last))
+    else
+        out_udp_total=$((out_udp_total + cur_out_udp))
+    fi
+
+    updated=$(date '+%Y-%m-%d %H:%M:%S')
+    set_stats_state "$port" "$in_tcp_total" "$in_udp_total" "$out_tcp_total" "$out_udp_total" \
+        "$cur_in_tcp" "$cur_in_udp" "$cur_out_tcp" "$cur_out_udp" "$updated"
+
+    STAT_IN_TCP_TOTAL="$in_tcp_total"
+    STAT_IN_UDP_TOTAL="$in_udp_total"
+    STAT_OUT_TCP_TOTAL="$out_tcp_total"
+    STAT_OUT_UDP_TOTAL="$out_udp_total"
+}
+
+sync_config_stats() {
+    [ -f "$CONFIG_FILE" ] || return 0
+    local line port
+
+    ensure_stats_rules || return 1
+    while IFS= read -r line; do
+        port=""
+        if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+            port="${BASH_REMATCH[3]}"
+        elif [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://:([0-9]+) ]]; then
+            port="${BASH_REMATCH[1]}"
+        fi
+        [ -n "$port" ] && sync_stats_port "$port" >/dev/null 2>&1
+    done < "$CONFIG_FILE"
+}
+
+archive_stats_port() {
+    local port="$1" user="$2" archived_at safe_user
+    local in_total=0 out_total=0
+    STAT_IN_TCP_TOTAL=0
+    STAT_IN_UDP_TOTAL=0
+    STAT_OUT_TCP_TOTAL=0
+    STAT_OUT_UDP_TOTAL=0
+    sync_stats_port "$port" >/dev/null 2>&1 || true
+    mkdir -p "$STATS_DIR"
+    safe_user=${user//$'\t'/ }
+    archived_at=$(date '+%Y-%m-%d %H:%M:%S')
+    in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+    out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$archived_at" "$safe_user" "$port" \
+        "${STAT_IN_TCP_TOTAL:-0}" "${STAT_IN_UDP_TOTAL:-0}" \
+        "${STAT_OUT_TCP_TOTAL:-0}" "${STAT_OUT_UDP_TOTAL:-0}" \
+        "$in_total" "$out_total" >> "$STATS_ARCHIVE_FILE"
+}
+
+reset_stats_port() {
+    local port="$1"
+    remove_stats_port "$port"
+    add_stats_port "$port" || return 1
+    set_stats_state "$port" 0 0 0 0 0 0 0 0 "$(date '+%Y-%m-%d %H:%M:%S')"
+}
+
+move_stats_port() {
+    local old_port="$1" new_port="$2"
+
+    STAT_IN_TCP_TOTAL=0
+    STAT_IN_UDP_TOTAL=0
+    STAT_OUT_TCP_TOTAL=0
+    STAT_OUT_UDP_TOTAL=0
+    sync_stats_port "$old_port" >/dev/null 2>&1 || true
+    remove_stats_port "$old_port"
+    delete_stats_state "$old_port"
+    add_stats_port "$new_port" || return 1
+    set_stats_state "$new_port" \
+        "${STAT_IN_TCP_TOTAL:-0}" "${STAT_IN_UDP_TOTAL:-0}" \
+        "${STAT_OUT_TCP_TOTAL:-0}" "${STAT_OUT_UDP_TOTAL:-0}" \
+        0 0 0 0 "$(date '+%Y-%m-%d %H:%M:%S')"
 }
 
 list_users() {
@@ -191,6 +467,115 @@ list_users() {
 
     [ $found -eq 0 ] && echo -e "  ${DIM}Пользователей не найдено${NC}"
     echo ""
+}
+
+show_stats_table() {
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo -e "  ${DIM}Нет пользователей${NC}\n"; return
+    fi
+
+    if ! command -v iptables >/dev/null 2>&1; then
+        echo -e "  ${RED}iptables не найден. Статистика недоступна.${NC}\n"; return
+    fi
+
+    sync_config_stats >/dev/null 2>&1 || true
+
+    local count=1 found=0 line user port in_total out_total total
+    printf "  ${DIM}%-4s %-20s %-8s %-12s %-12s %-12s${NC}\n" "ID" "ЛОГИН" "ПОРТ" "ВХОД" "ИСХОД" "ВСЕГО"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────────────────${NC}"
+
+    while IFS= read -r line; do
+        user=""; port=""
+        if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+            user="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[3]}"
+        elif [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://:([0-9]+) ]]; then
+            user="(без авторизации)"; port="${BASH_REMATCH[1]}"
+        fi
+
+        if [ -n "$port" ]; then
+            read_stats_state "$port"
+            in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+            out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
+            total=$((in_total + out_total))
+            [ ${#user} -gt 20 ] && user="${user:0:17}..."
+            printf "  ${WHITE}%-4s${NC} ${GREEN}%-20s${NC} ${CYAN}%-8s${NC} ${YELLOW}%-12s${NC} ${YELLOW}%-12s${NC} ${WHITE}%-12s${NC}\n" \
+                "$count" "$user" "$port" "$(format_bytes "$in_total")" "$(format_bytes "$out_total")" "$(format_bytes "$total")"
+            ((count++)); found=1
+        fi
+    done < "$CONFIG_FILE"
+
+    [ $found -eq 0 ] && echo -e "  ${DIM}Пользователей не найдено${NC}"
+    echo ""
+    echo -e "  ${DIM}Вход — трафик к порту пользователя; исход — ответы с этого порта.${NC}"
+    echo -e "  ${DIM}Данные сохраняются в ${STATS_STATE_FILE}${NC}"
+    echo ""
+}
+
+show_stats_detail() {
+    local user="$1" port="$2" in_total out_total total
+
+    while true; do
+        if ! command -v iptables >/dev/null 2>&1; then
+            section "Статистика: ${user}"
+            echo -e "  ${RED}iptables не найден. Статистика недоступна.${NC}"
+            pause; return
+        fi
+
+        sync_stats_port "$port" >/dev/null 2>&1 || true
+        read_stats_state "$port"
+        in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+        out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
+        total=$((in_total + out_total))
+
+        arrow_menu "Статистика: ${user}  порт ${port}" \
+            "Входящий TCP: $(format_bytes "${STAT_IN_TCP_TOTAL:-0}")	— трафик к порту пользователя" \
+            "Входящий UDP: $(format_bytes "${STAT_IN_UDP_TOTAL:-0}")	— трафик к порту пользователя" \
+            "Исходящий TCP: $(format_bytes "${STAT_OUT_TCP_TOTAL:-0}")	— ответы с порта пользователя" \
+            "Исходящий UDP: $(format_bytes "${STAT_OUT_UDP_TOTAL:-0}")	— ответы с порта пользователя" \
+            "Всего: $(format_bytes "$total")	— входящий + исходящий" \
+            "Сбросить статистику	— обнулить счётчики порта ${port}" \
+            "← Назад	"
+
+        case $ARROW_CHOICE in
+            5)  arrow_menu "Сбросить статистику?" \
+                    "Да, сбросить порт ${port}	— действие необратимо" \
+                    "Нет	— вернуться назад"
+                [ "$ARROW_CHOICE" -ne 0 ] && continue
+                section "Сброс статистики"
+                echo ""
+                run_with_spinner "Сброс счётчиков..." reset_stats_port "$port"
+                echo -e "\n  ${GREEN}✓  Статистика порта ${port} сброшена${NC}"
+                pause ;;
+            6)  return ;;
+        esac
+    done
+}
+
+show_archived_stats() {
+    section "Архив статистики"
+
+    if [ ! -s "$STATS_ARCHIVE_FILE" ]; then
+        echo -e "  ${DIM}Архив пуст${NC}"
+        pause; return
+    fi
+
+    printf "  ${DIM}%-19s %-20s %-8s %-10s %-10s %-10s %-10s${NC}\n" "ДАТА" "ЛОГИН" "ПОРТ" "ВХ.TCP" "ВХ.UDP" "ИСХ.TCP" "ИСХ.UDP"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────────────────────────────────${NC}"
+
+    tail -n 20 "$STATS_ARCHIVE_FILE" | while IFS=$'\t' read -r archived_at user port in_tcp in_udp out_tcp out_udp in_total out_total; do
+        [ ${#user} -gt 20 ] && user="${user:0:17}..."
+        if [ -z "${out_total:-}" ]; then
+            in_total=${in_tcp:-0}
+            out_total=${in_udp:-0}
+            in_tcp=$in_total
+            in_udp=0
+            out_tcp=$out_total
+            out_udp=0
+        fi
+        printf "  ${WHITE}%-19s${NC} ${GREEN}%-20s${NC} ${CYAN}%-8s${NC} ${YELLOW}%-10s${NC} ${YELLOW}%-10s${NC} ${YELLOW}%-10s${NC} ${YELLOW}%-10s${NC}\n" \
+            "$archived_at" "$user" "$port" "$(format_bytes "${in_tcp:-0}")" "$(format_bytes "${in_udp:-0}")" "$(format_bytes "${out_tcp:-0}")" "$(format_bytes "${out_udp:-0}")"
+    done
+    pause
 }
 
 pick_user() {
@@ -236,7 +621,7 @@ install_glider() {
     fi
 
     while true; do
-        prompt "Порт прокси [18443]:"; read PROXY_PORT
+        prompt "Порт прокси [18443]:"; read -r PROXY_PORT
         PROXY_PORT=${PROXY_PORT:-18443}
         validate_port "$PROXY_PORT" && break; sleep 1
     done
@@ -250,11 +635,11 @@ install_glider() {
 
     if [ "$auth_choice" -eq 1 ]; then
         while true; do
-            prompt "Логин:"; read PROXY_USER
+            prompt "Логин:"; read -r PROXY_USER
             validate_credentials "$PROXY_USER" "Логин" && break; sleep 1
         done
         while true; do
-            prompt "Пароль:"; read -s PROXY_PASS; echo
+            prompt "Пароль:"; read -rs PROXY_PASS; echo
             validate_credentials "$PROXY_PASS" "Пароль" && break; sleep 1
         done
         LISTEN_STRING="listen=mixed://${PROXY_USER}:${PROXY_PASS}@:${PROXY_PORT}"
@@ -264,16 +649,14 @@ install_glider() {
 
     echo ""
     run_with_spinner "Обновление пакетов..."     apt update
-    run_with_spinner "Установка зависимостей..." apt install -y curl wget tar
+    run_with_spinner "Установка зависимостей..." apt install -y curl wget tar iptables
 
     cd /tmp || return
     rm -rf glider_* glider.tar.gz glider.deb 2>/dev/null || true
 
-    run_with_spinner "Скачивание Glider v${VERSION}..." \
+    if run_with_spinner "Скачивание Glider v${VERSION}..." \
         wget -q "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.tar.gz" \
-        -O /tmp/glider.tar.gz
-
-    if [ $? -eq 0 ]; then
+        -O /tmp/glider.tar.gz; then
         run_with_spinner "Распаковка архива..."     tar -xzf /tmp/glider.tar.gz -C /tmp
         run_with_spinner "Копирование бинарника..." copy_binary
     else
@@ -319,6 +702,7 @@ After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=-$SCRIPT_PATH --sync-stats
 ExecStart=$BINARY_PATH -config $CONFIG_FILE
 Restart=on-failure
 RestartSec=5
@@ -329,6 +713,7 @@ EOF
 
     run_with_spinner "Регистрация службы..."    systemctl daemon-reload
     run_with_spinner "Включение автозапуска..." systemctl enable glider
+    run_with_spinner "Настройка статистики..."  add_stats_port "$PROXY_PORT"
     run_with_spinner "Запуск службы..."         systemctl start glider
     sleep 2
     echo ""
@@ -384,11 +769,9 @@ update_glider() {
     cd /tmp || return
     rm -rf glider_* glider.tar.gz 2>/dev/null || true
 
-    run_with_spinner "Скачивание Glider v${VERSION}..." \
+    if run_with_spinner "Скачивание Glider v${VERSION}..." \
         wget -q "https://github.com/nadoo/glider/releases/download/v${VERSION}/glider_${VERSION}_linux_amd64.tar.gz" \
-        -O /tmp/glider.tar.gz
-
-    if [ $? -eq 0 ]; then
+        -O /tmp/glider.tar.gz; then
         run_with_spinner "Распаковка архива..."     tar -xzf /tmp/glider.tar.gz -C /tmp
         run_with_spinner "Копирование бинарника..." copy_binary
     else
@@ -440,15 +823,15 @@ manage_users() {
         case $ARROW_CHOICE in
             0)  section "Добавить пользователя"
                 while true; do
-                    prompt "Логин:"; read NEW_USER
+                    prompt "Логин:"; read -r NEW_USER
                     validate_credentials "$NEW_USER" "Логин" && break; sleep 1
                 done
                 while true; do
-                    prompt "Пароль:"; read -s NEW_PASS; echo
+                    prompt "Пароль:"; read -rs NEW_PASS; echo
                     validate_credentials "$NEW_PASS" "Пароль" && break; sleep 1
                 done
                 while true; do
-                    prompt "Порт:"; read NEW_PORT
+                    prompt "Порт:"; read -r NEW_PORT
                     validate_port "$NEW_PORT" || { sleep 1; continue; }
                     check_port_used "$NEW_PORT" && {
                         echo -e "\n  ${RED}✗ Порт занят${NC}"; sleep 1; continue
@@ -458,6 +841,7 @@ manage_users() {
                 echo ""
                 run_with_spinner "Сохранение конфига..." \
                     sed -i "/^# HTTP + SOCKS5 прокси/a listen=mixed://${NEW_USER}:${NEW_PASS}@:${NEW_PORT}" "$CONFIG_FILE"
+                run_with_spinner "Настройка статистики..." add_stats_port "$NEW_PORT"
                 run_with_spinner "Перезапуск службы..." systemctl restart glider
                 sleep 2; echo ""
                 systemctl is-active --quiet glider \
@@ -487,13 +871,13 @@ manage_users() {
                 section "Изменить пользователя"
                 echo -e "  ${DIM}Редактирование:${NC} ${WHITE}${old_username}${NC}  ${DIM}порт ${NC}${CYAN}${old_port}${NC}\n"
 
-                prompt "Новый логин [${old_username}]:";       read new_username
+                prompt "Новый логин [${old_username}]:";       read -r new_username
                 new_username=${new_username:-$old_username}
                 validate_credentials "$new_username" "Логин"  || { sleep 2; continue; }
-                prompt "Новый пароль [Enter — оставить]:";     read -s new_password; echo
+                prompt "Новый пароль [Enter — оставить]:";     read -rs new_password; echo
                 new_password=${new_password:-$old_password}
                 validate_credentials "$new_password" "Пароль" || { sleep 2; continue; }
-                prompt "Новый порт [${old_port}]:";            read new_port
+                prompt "Новый порт [${old_port}]:";            read -r new_port
                 new_port=${new_port:-$old_port}
                 validate_port "$new_port"                      || { sleep 2; continue; }
                 [ "$new_port" != "$old_port" ] && check_port_used "$new_port" && {
@@ -502,6 +886,11 @@ manage_users() {
                 echo ""
                 run_with_spinner "Сохранение конфига..." \
                     sed -i "s|^listen=.*:${old_port}$|listen=mixed://${new_username}:${new_password}@:${new_port}|" "$CONFIG_FILE"
+                if [ "$new_port" != "$old_port" ]; then
+                    run_with_spinner "Перенос статистики..." move_stats_port "$old_port" "$new_port"
+                else
+                    run_with_spinner "Проверка статистики..." add_stats_port "$new_port"
+                fi
                 run_with_spinner "Перезапуск службы..." systemctl restart glider || true
                 sleep 2; echo ""
                 systemctl is-active --quiet glider \
@@ -527,6 +916,9 @@ manage_users() {
 
                 section "Удалить пользователя"
                 echo ""
+                run_with_spinner "Архивация статистики..." archive_stats_port "$del_port" "$del_user"
+                run_with_spinner "Удаление статистики..."   remove_stats_port "$del_port"
+                delete_stats_state "$del_port"
                 run_with_spinner "Удаление из конфига..." sed -i "/^listen=.*:${del_port}/d" "$CONFIG_FILE"
                 run_with_spinner "Перезапуск службы..."   systemctl restart glider || true
                 sleep 2; echo ""
@@ -537,6 +929,71 @@ manage_users() {
 
             3) return ;;
         esac
+    done
+}
+
+manage_stats() {
+    while true; do
+        section "Статистика"
+
+        if ! check_glider_installed; then
+            echo -e "  ${YELLOW}Glider не установлен.${NC}"; pause; return
+        fi
+
+        if [ ! -f "$CONFIG_FILE" ]; then
+            echo -e "  ${DIM}Нет пользователей${NC}"; pause; return
+        fi
+
+        if ! command -v iptables >/dev/null 2>&1; then
+            echo -e "  ${RED}iptables не найден. Статистика недоступна.${NC}"
+            pause; return
+        fi
+
+        sync_config_stats >/dev/null 2>&1 || true
+
+        local labels=()
+        local ports=()
+        local users=()
+        local line user port display_user in_total out_total total
+
+        while IFS= read -r line; do
+            user=""; port=""
+            if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+                user="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[3]}"
+            elif [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://:([0-9]+) ]]; then
+                user="(без авторизации)"; port="${BASH_REMATCH[1]}"
+            fi
+
+            if [ -n "$port" ]; then
+                read_stats_state "$port"
+                in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+                out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
+                total=$((in_total + out_total))
+                display_user="$user"
+                [ ${#display_user} -gt 20 ] && display_user="${display_user:0:17}..."
+                labels+=("${display_user}	порт ${port}, всего $(format_bytes "$total")")
+                users+=("$user")
+                ports+=("$port")
+            fi
+        done < "$CONFIG_FILE"
+
+        if [ ${#labels[@]} -eq 0 ]; then
+            echo -e "  ${DIM}Пользователей не найдено${NC}"
+            pause; return
+        fi
+
+        labels+=("Архив удалённых пользователей	— последние сохранённые значения")
+        labels+=("← Назад	")
+
+        arrow_menu "Пользователи" "${labels[@]}"
+
+        if [ "$ARROW_CHOICE" -lt "${#ports[@]}" ]; then
+            show_stats_detail "${users[$ARROW_CHOICE]}" "${ports[$ARROW_CHOICE]}"
+        elif [ "$ARROW_CHOICE" -eq "${#ports[@]}" ]; then
+            show_archived_stats
+        else
+            return
+        fi
     done
 }
 
@@ -585,7 +1042,8 @@ remove_glider() {
 
     run_with_spinner "Остановка службы..."        systemctl stop glider
     run_with_spinner "Отключение автозапуска..."  systemctl disable glider
-    run_with_spinner "Удаление файлов..."         bash -c "rm -f $BINARY_PATH $SERVICE_FILE && rm -rf /etc/glider"
+    run_with_spinner "Удаление статистики..."     remove_stats_rules
+    run_with_spinner "Удаление файлов..."         bash -c "rm -f $BINARY_PATH $SERVICE_FILE && rm -rf /etc/glider $STATS_DIR"
     run_with_spinner "Перезагрузка systemd..."    systemctl daemon-reload
 
     echo -e "\n  ${GREEN}${BOLD}✓  Glider полностью удалён${NC}"
@@ -612,6 +1070,7 @@ show_menu() {
         "Установить Glider	— скачать и настроить прокси-сервер"
         "Обновить Glider	— установить новую версию"
         "Пользователи	— управление доступом"
+        "Статистика	— входящий и исходящий трафик по портам"
         "Обновить скрипт	— загрузить последнюю версию менеджера"
         "Удалить Glider	— полное удаление"
         "Выход	"
@@ -666,13 +1125,15 @@ show_menu() {
         0) install_glider ;;
         1) update_glider  ;;
         2) manage_users   ;;
-        3) update_script  ;;
-        4) remove_glider  ;;
-        5) tput cnorm; clear; exit 0 ;;
+        3) manage_stats   ;;
+        4) update_script "$@" ;;
+        5) remove_glider  ;;
+        6) tput cnorm; clear; exit 0 ;;
     esac
 }
 
+run_cli_command "$1"
 check_root
 while true; do
-    show_menu
+    show_menu "$@"
 done
