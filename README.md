@@ -23,6 +23,7 @@
 
 - **Установка** — скачивает Glider, создаёт конфиг и регистрирует systemd-службу
 - **Управление пользователями** — добавление, изменение, удаление; навигация стрелками ↑↓
+- **Статистика трафика** — входящий, исходящий и общий трафик по порту пользователя
 - **Два режима** — с авторизацией (логин + пароль) или открытый доступ
 - **Обновление** — бинарника и самого скрипта в один клик
 - **Спиннер** — анимированный прогресс `⠋ → ✓` для каждой операции
@@ -34,7 +35,7 @@
 ## Быстрый старт
 
 ```bash
-sudo bash -c 'wget -q https://raw.githubusercontent.com/thekhabaroff/GliderProxy/main/glider.sh -O /usr/local/bin/glider-manager && chmod +x /usr/local/bin/glider-manager && mv /usr/local/bin/glider /usr/local/bin/glider-bin 2>/dev/null || true && ln -sf /usr/local/bin/glider-manager /usr/local/bin/glider && sed -i "s|ExecStart=/usr/local/bin/glider |ExecStart=/usr/local/bin/glider-bin |g" /etc/systemd/system/glider.service 2>/dev/null || true && systemctl daemon-reload 2>/dev/null && systemctl restart glider 2>/dev/null || true' && sudo glider
+sudo bash -c 'wget -q https://raw.githubusercontent.com/thekhabaroff/GliderProxy/master/glider.sh -O /usr/local/bin/glider-manager && chmod +x /usr/local/bin/glider-manager && mv /usr/local/bin/glider /usr/local/bin/glider-bin 2>/dev/null || true && ln -sf /usr/local/bin/glider-manager /usr/local/bin/glider && sed -i "s|ExecStart=/usr/local/bin/glider |ExecStart=/usr/local/bin/glider-bin |g" /etc/systemd/system/glider.service 2>/dev/null || true && systemctl daemon-reload 2>/dev/null && systemctl restart glider 2>/dev/null || true' && sudo glider
 ```
 
 > Требуются права **root** (`sudo`)
@@ -49,6 +50,7 @@ sudo bash -c 'wget -q https://raw.githubusercontent.com/thekhabaroff/GliderProxy
 | systemd | любая | для управления службой |
 | wget | любая | для скачивания бинарника |
 | tar | любая | для распаковки архива |
+| iptables | любая | для подсчёта трафика по портам |
 
 ---
 
@@ -90,6 +92,7 @@ sudo bash -c 'wget -q https://raw.githubusercontent.com/thekhabaroff/GliderProxy
 /usr/local/bin/glider-manager        — скрипт менеджера
 /etc/glider/glider.conf              — конфигурация прокси
 /etc/systemd/system/glider.service   — systemd-юнит
+/var/lib/glider-manager/stats/       — сохранённая статистика трафика
 ```
 
 ---
@@ -111,6 +114,26 @@ checktimeout=10
 
 strategy=rr
 ```
+
+---
+
+## Статистика трафика
+
+Меню **«Статистика»** показывает трафик по каждому пользователю:
+
+```text
+ID   ЛОГИН                ПОРТ     ВХОД         ИСХОД        ВСЕГО
+1    myuser               18443    1.25 GiB     320.10 MiB   1.56 GiB
+```
+
+- **Вход** — байты, пришедшие на порт пользователя (`INPUT --dport`)
+- **Исход** — байты, отправленные с порта пользователя (`OUTPUT --sport`)
+- Для подсчёта используются отдельные цепочки `iptables`: `GLIDER_STATS_IN` и `GLIDER_STATS_OUT`
+- Данные сохраняются в `/var/lib/glider-manager/stats/traffic.tsv`
+- При удалении пользователя финальные значения переносятся в `/var/lib/glider-manager/stats/deleted.tsv`
+- В меню можно сбросить статистику выбранного пользователя
+
+Скрипт добавляет `ExecStartPre=/usr/local/bin/glider-manager --sync-stats` в systemd-юнит, чтобы правила статистики восстанавливались перед запуском Glider. После перезагрузки системные счётчики `iptables` начинают считаться заново, но менеджер сохраняет накопленные значения в файл состояния при открытии меню статистики и операциях с пользователями.
 
 ---
 
