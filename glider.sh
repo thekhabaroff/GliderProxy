@@ -255,21 +255,58 @@ ensure_stats_service_hook() {
 }
 
 get_stats_counter() {
-    local chain="$1" marker="$2" port="$3"
+    local chain="$1" proto="$2" marker="$3" port="$4"
     iptables -L "$chain" -v -x -n 2>/dev/null \
-        | awk -v marker="$marker" -v port="$port" '$0 ~ marker port "([^0-9]|$)" { bytes += $2 } END { print bytes + 0 }'
+        | awk -v proto="$proto" -v marker="$marker" -v port="$port" '$3 == proto && $0 ~ marker port "([^0-9]|$)" { bytes += $2 } END { print bytes + 0 }'
 }
 
 set_stats_state() {
-    local port="$1" in_total="$2" out_total="$3" in_last="$4" out_last="$5" updated="$6" tmp
+    local port="$1" in_tcp_total="$2" in_udp_total="$3" out_tcp_total="$4" out_udp_total="$5"
+    local in_tcp_last="$6" in_udp_last="$7" out_tcp_last="$8" out_udp_last="$9" updated="${10}" tmp
     mkdir -p "$STATS_DIR"
     tmp=$(mktemp "${STATS_DIR}/traffic.XXXXXX") || return 1
 
     if [ -f "$STATS_STATE_FILE" ]; then
         awk -F '\t' -v p="$port" '$1 != p { print }' "$STATS_STATE_FILE" > "$tmp"
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$port" "$in_total" "$out_total" "$in_last" "$out_last" "$updated" >> "$tmp"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$port" "$in_tcp_total" "$in_udp_total" "$out_tcp_total" "$out_udp_total" \
+        "$in_tcp_last" "$in_udp_last" "$out_tcp_last" "$out_udp_last" "$updated" >> "$tmp"
     mv "$tmp" "$STATS_STATE_FILE"
+}
+
+read_stats_state() {
+    local port="$1" row
+    local c1 c2 c3 c4 c5 c6 c7 c8 c9 c10
+    STAT_IN_TCP_TOTAL=0
+    STAT_IN_UDP_TOTAL=0
+    STAT_OUT_TCP_TOTAL=0
+    STAT_OUT_UDP_TOTAL=0
+    STAT_IN_TCP_LAST=0
+    STAT_IN_UDP_LAST=0
+    STAT_OUT_TCP_LAST=0
+    STAT_OUT_UDP_LAST=0
+
+    row=$(awk -F '\t' -v p="$port" '$1 == p { line = $0 } END { print line }' "$STATS_STATE_FILE" 2>/dev/null)
+    [ -z "$row" ] && return 0
+
+    IFS=$'\t' read -r c1 c2 c3 c4 c5 c6 c7 c8 c9 c10 <<< "$row"
+    : "${c1:=}"
+    if [ -n "${c10:-}" ]; then
+        STAT_IN_TCP_TOTAL=${c2:-0}
+        STAT_IN_UDP_TOTAL=${c3:-0}
+        STAT_OUT_TCP_TOTAL=${c4:-0}
+        STAT_OUT_UDP_TOTAL=${c5:-0}
+        STAT_IN_TCP_LAST=${c6:-0}
+        STAT_IN_UDP_LAST=${c7:-0}
+        STAT_OUT_TCP_LAST=${c8:-0}
+        STAT_OUT_UDP_LAST=${c9:-0}
+    else
+        STAT_IN_TCP_TOTAL=${c2:-0}
+        STAT_OUT_TCP_TOTAL=${c3:-0}
+        STAT_IN_TCP_LAST=${c4:-0}
+        STAT_OUT_TCP_LAST=${c5:-0}
+    fi
 }
 
 delete_stats_state() {
@@ -281,37 +318,60 @@ delete_stats_state() {
 }
 
 sync_stats_port() {
-    local port="$1" row in_total=0 out_total=0 in_last=0 out_last=0 updated cur_in cur_out
-    local old_port old_updated
+    local port="$1" updated
+    local cur_in_tcp cur_in_udp cur_out_tcp cur_out_udp
+    local in_tcp_total in_udp_total out_tcp_total out_udp_total
+    local in_tcp_last in_udp_last out_tcp_last out_udp_last
 
     add_stats_port "$port" || return 1
 
-    cur_in=$(get_stats_counter "$STATS_IN_CHAIN" "dpt:" "$port")
-    cur_out=$(get_stats_counter "$STATS_OUT_CHAIN" "spt:" "$port")
+    read_stats_state "$port"
+    in_tcp_total=${STAT_IN_TCP_TOTAL:-0}
+    in_udp_total=${STAT_IN_UDP_TOTAL:-0}
+    out_tcp_total=${STAT_OUT_TCP_TOTAL:-0}
+    out_udp_total=${STAT_OUT_UDP_TOTAL:-0}
+    in_tcp_last=${STAT_IN_TCP_LAST:-0}
+    in_udp_last=${STAT_IN_UDP_LAST:-0}
+    out_tcp_last=${STAT_OUT_TCP_LAST:-0}
+    out_udp_last=${STAT_OUT_UDP_LAST:-0}
 
-    row=$(awk -F '\t' -v p="$port" '$1 == p { line = $0 } END { print line }' "$STATS_STATE_FILE" 2>/dev/null)
-    if [ -n "$row" ]; then
-        IFS=$'\t' read -r old_port in_total out_total in_last out_last old_updated <<< "$row"
-        : "${old_port:=}" "${old_updated:=}"
+    cur_in_tcp=$(get_stats_counter "$STATS_IN_CHAIN" "tcp" "dpt:" "$port")
+    cur_in_udp=$(get_stats_counter "$STATS_IN_CHAIN" "udp" "dpt:" "$port")
+    cur_out_tcp=$(get_stats_counter "$STATS_OUT_CHAIN" "tcp" "spt:" "$port")
+    cur_out_udp=$(get_stats_counter "$STATS_OUT_CHAIN" "udp" "spt:" "$port")
+
+    if [ "$cur_in_tcp" -ge "$in_tcp_last" ]; then
+        in_tcp_total=$((in_tcp_total + cur_in_tcp - in_tcp_last))
+    else
+        in_tcp_total=$((in_tcp_total + cur_in_tcp))
     fi
 
-    if [ "$cur_in" -ge "$in_last" ]; then
-        in_total=$((in_total + cur_in - in_last))
+    if [ "$cur_in_udp" -ge "$in_udp_last" ]; then
+        in_udp_total=$((in_udp_total + cur_in_udp - in_udp_last))
     else
-        in_total=$((in_total + cur_in))
+        in_udp_total=$((in_udp_total + cur_in_udp))
     fi
 
-    if [ "$cur_out" -ge "$out_last" ]; then
-        out_total=$((out_total + cur_out - out_last))
+    if [ "$cur_out_tcp" -ge "$out_tcp_last" ]; then
+        out_tcp_total=$((out_tcp_total + cur_out_tcp - out_tcp_last))
     else
-        out_total=$((out_total + cur_out))
+        out_tcp_total=$((out_tcp_total + cur_out_tcp))
+    fi
+
+    if [ "$cur_out_udp" -ge "$out_udp_last" ]; then
+        out_udp_total=$((out_udp_total + cur_out_udp - out_udp_last))
+    else
+        out_udp_total=$((out_udp_total + cur_out_udp))
     fi
 
     updated=$(date '+%Y-%m-%d %H:%M:%S')
-    set_stats_state "$port" "$in_total" "$out_total" "$cur_in" "$cur_out" "$updated"
+    set_stats_state "$port" "$in_tcp_total" "$in_udp_total" "$out_tcp_total" "$out_udp_total" \
+        "$cur_in_tcp" "$cur_in_udp" "$cur_out_tcp" "$cur_out_udp" "$updated"
 
-    STAT_IN_TOTAL="$in_total"
-    STAT_OUT_TOTAL="$out_total"
+    STAT_IN_TCP_TOTAL="$in_tcp_total"
+    STAT_IN_UDP_TOTAL="$in_udp_total"
+    STAT_OUT_TCP_TOTAL="$out_tcp_total"
+    STAT_OUT_UDP_TOTAL="$out_udp_total"
 }
 
 sync_config_stats() {
@@ -332,32 +392,46 @@ sync_config_stats() {
 
 archive_stats_port() {
     local port="$1" user="$2" archived_at safe_user
-    STAT_IN_TOTAL=0
-    STAT_OUT_TOTAL=0
+    local in_total=0 out_total=0
+    STAT_IN_TCP_TOTAL=0
+    STAT_IN_UDP_TOTAL=0
+    STAT_OUT_TCP_TOTAL=0
+    STAT_OUT_UDP_TOTAL=0
     sync_stats_port "$port" >/dev/null 2>&1 || true
     mkdir -p "$STATS_DIR"
     safe_user=${user//$'\t'/ }
     archived_at=$(date '+%Y-%m-%d %H:%M:%S')
-    printf '%s\t%s\t%s\t%s\t%s\n' "$archived_at" "$safe_user" "$port" "${STAT_IN_TOTAL:-0}" "${STAT_OUT_TOTAL:-0}" >> "$STATS_ARCHIVE_FILE"
+    in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+    out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$archived_at" "$safe_user" "$port" \
+        "${STAT_IN_TCP_TOTAL:-0}" "${STAT_IN_UDP_TOTAL:-0}" \
+        "${STAT_OUT_TCP_TOTAL:-0}" "${STAT_OUT_UDP_TOTAL:-0}" \
+        "$in_total" "$out_total" >> "$STATS_ARCHIVE_FILE"
 }
 
 reset_stats_port() {
     local port="$1"
     remove_stats_port "$port"
     add_stats_port "$port" || return 1
-    set_stats_state "$port" 0 0 0 0 "$(date '+%Y-%m-%d %H:%M:%S')"
+    set_stats_state "$port" 0 0 0 0 0 0 0 0 "$(date '+%Y-%m-%d %H:%M:%S')"
 }
 
 move_stats_port() {
     local old_port="$1" new_port="$2"
 
-    STAT_IN_TOTAL=0
-    STAT_OUT_TOTAL=0
+    STAT_IN_TCP_TOTAL=0
+    STAT_IN_UDP_TOTAL=0
+    STAT_OUT_TCP_TOTAL=0
+    STAT_OUT_UDP_TOTAL=0
     sync_stats_port "$old_port" >/dev/null 2>&1 || true
     remove_stats_port "$old_port"
     delete_stats_state "$old_port"
     add_stats_port "$new_port" || return 1
-    set_stats_state "$new_port" "${STAT_IN_TOTAL:-0}" "${STAT_OUT_TOTAL:-0}" 0 0 "$(date '+%Y-%m-%d %H:%M:%S')"
+    set_stats_state "$new_port" \
+        "${STAT_IN_TCP_TOTAL:-0}" "${STAT_IN_UDP_TOTAL:-0}" \
+        "${STAT_OUT_TCP_TOTAL:-0}" "${STAT_OUT_UDP_TOTAL:-0}" \
+        0 0 0 0 "$(date '+%Y-%m-%d %H:%M:%S')"
 }
 
 list_users() {
@@ -399,7 +473,7 @@ show_stats_table() {
 
     sync_config_stats >/dev/null 2>&1 || true
 
-    local count=1 found=0 line user port row in_total out_total in_last out_last updated total
+    local count=1 found=0 line user port in_total out_total total
     printf "  ${DIM}%-4s %-20s %-8s %-12s %-12s %-12s${NC}\n" "ID" "ЛОГИН" "ПОРТ" "ВХОД" "ИСХОД" "ВСЕГО"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────────────────${NC}"
 
@@ -412,10 +486,9 @@ show_stats_table() {
         fi
 
         if [ -n "$port" ]; then
-            row=$(awk -F '\t' -v p="$port" '$1 == p { line = $0 } END { print line }' "$STATS_STATE_FILE" 2>/dev/null)
-            in_total=0; out_total=0; in_last=0; out_last=0; updated=""
-            [ -n "$row" ] && IFS=$'\t' read -r _ in_total out_total in_last out_last updated <<< "$row"
-            : "${in_last:=0}" "${out_last:=0}" "${updated:=}"
+            read_stats_state "$port"
+            in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+            out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
             total=$((in_total + out_total))
             [ ${#user} -gt 20 ] && user="${user:0:17}..."
             printf "  ${WHITE}%-4s${NC} ${GREEN}%-20s${NC} ${CYAN}%-8s${NC} ${YELLOW}%-12s${NC} ${YELLOW}%-12s${NC} ${WHITE}%-12s${NC}\n" \
@@ -431,6 +504,46 @@ show_stats_table() {
     echo ""
 }
 
+show_stats_detail() {
+    local user="$1" port="$2" in_total out_total total
+
+    while true; do
+        if ! command -v iptables >/dev/null 2>&1; then
+            section "Статистика: ${user}"
+            echo -e "  ${RED}iptables не найден. Статистика недоступна.${NC}"
+            pause; return
+        fi
+
+        sync_stats_port "$port" >/dev/null 2>&1 || true
+        read_stats_state "$port"
+        in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+        out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
+        total=$((in_total + out_total))
+
+        arrow_menu "Статистика: ${user}  порт ${port}" \
+            "Входящий TCP: $(format_bytes "${STAT_IN_TCP_TOTAL:-0}")	— трафик к порту пользователя" \
+            "Входящий UDP: $(format_bytes "${STAT_IN_UDP_TOTAL:-0}")	— трафик к порту пользователя" \
+            "Исходящий TCP: $(format_bytes "${STAT_OUT_TCP_TOTAL:-0}")	— ответы с порта пользователя" \
+            "Исходящий UDP: $(format_bytes "${STAT_OUT_UDP_TOTAL:-0}")	— ответы с порта пользователя" \
+            "Всего: $(format_bytes "$total")	— входящий + исходящий" \
+            "Сбросить статистику	— обнулить счётчики порта ${port}" \
+            "← Назад	"
+
+        case $ARROW_CHOICE in
+            5)  arrow_menu "Сбросить статистику?" \
+                    "Да, сбросить порт ${port}	— действие необратимо" \
+                    "Нет	— вернуться назад"
+                [ "$ARROW_CHOICE" -ne 0 ] && continue
+                section "Сброс статистики"
+                echo ""
+                run_with_spinner "Сброс счётчиков..." reset_stats_port "$port"
+                echo -e "\n  ${GREEN}✓  Статистика порта ${port} сброшена${NC}"
+                pause ;;
+            6)  return ;;
+        esac
+    done
+}
+
 show_archived_stats() {
     section "Архив статистики"
 
@@ -439,13 +552,21 @@ show_archived_stats() {
         pause; return
     fi
 
-    printf "  ${DIM}%-19s %-20s %-8s %-12s %-12s${NC}\n" "ДАТА" "ЛОГИН" "ПОРТ" "ВХОД" "ИСХОД"
-    echo -e "  ${DIM}────────────────────────────────────────────────────────────────────────${NC}"
+    printf "  ${DIM}%-19s %-20s %-8s %-10s %-10s %-10s %-10s${NC}\n" "ДАТА" "ЛОГИН" "ПОРТ" "ВХ.TCP" "ВХ.UDP" "ИСХ.TCP" "ИСХ.UDP"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────────────────────────────────${NC}"
 
-    tail -n 20 "$STATS_ARCHIVE_FILE" | while IFS=$'\t' read -r archived_at user port in_total out_total; do
+    tail -n 20 "$STATS_ARCHIVE_FILE" | while IFS=$'\t' read -r archived_at user port in_tcp in_udp out_tcp out_udp in_total out_total; do
         [ ${#user} -gt 20 ] && user="${user:0:17}..."
-        printf "  ${WHITE}%-19s${NC} ${GREEN}%-20s${NC} ${CYAN}%-8s${NC} ${YELLOW}%-12s${NC} ${YELLOW}%-12s${NC}\n" \
-            "$archived_at" "$user" "$port" "$(format_bytes "$in_total")" "$(format_bytes "$out_total")"
+        if [ -z "${out_total:-}" ]; then
+            in_total=${in_tcp:-0}
+            out_total=${in_udp:-0}
+            in_tcp=$in_total
+            in_udp=0
+            out_tcp=$out_total
+            out_udp=0
+        fi
+        printf "  ${WHITE}%-19s${NC} ${GREEN}%-20s${NC} ${CYAN}%-8s${NC} ${YELLOW}%-10s${NC} ${YELLOW}%-10s${NC} ${YELLOW}%-10s${NC} ${YELLOW}%-10s${NC}\n" \
+            "$archived_at" "$user" "$port" "$(format_bytes "${in_tcp:-0}")" "$(format_bytes "${in_udp:-0}")" "$(format_bytes "${out_tcp:-0}")" "$(format_bytes "${out_udp:-0}")"
     done
     pause
 }
@@ -812,28 +933,60 @@ manage_stats() {
             echo -e "  ${YELLOW}Glider не установлен.${NC}"; pause; return
         fi
 
-        show_stats_table
+        if [ ! -f "$CONFIG_FILE" ]; then
+            echo -e "  ${DIM}Нет пользователей${NC}"; pause; return
+        fi
 
-        arrow_menu "Статистика трафика" \
-            "Сбросить статистику пользователя	— обнулить счётчики выбранного порта" \
-            "Архив удалённых пользователей	— последние сохранённые значения" \
-            "← Назад	"
+        if ! command -v iptables >/dev/null 2>&1; then
+            echo -e "  ${RED}iptables не найден. Статистика недоступна.${NC}"
+            pause; return
+        fi
 
-        case $ARROW_CHOICE in
-            0)  pick_user "Выберите пользователя для сброса" || continue
-                local reset_port="$USER_SEL_PORT"
-                arrow_menu "Сбросить статистику?" \
-                    "Да, сбросить порт ${reset_port}	— действие необратимо" \
-                    "Нет	— вернуться назад"
-                [ "$ARROW_CHOICE" -ne 0 ] && continue
-                section "Сброс статистики"
-                echo ""
-                run_with_spinner "Сброс счётчиков..." reset_stats_port "$reset_port"
-                echo -e "\n  ${GREEN}✓  Статистика порта ${reset_port} сброшена${NC}"
-                pause ;;
-            1)  show_archived_stats ;;
-            2)  return ;;
-        esac
+        sync_config_stats >/dev/null 2>&1 || true
+
+        local labels=()
+        local ports=()
+        local users=()
+        local line user port display_user in_total out_total total
+
+        while IFS= read -r line; do
+            user=""; port=""
+            if [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://([^:]+):([^@]+)@:([0-9]+) ]]; then
+                user="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[3]}"
+            elif [[ $line =~ ^[[:space:]]*listen[[:space:]]*=[[:space:]]*mixed://:([0-9]+) ]]; then
+                user="(без авторизации)"; port="${BASH_REMATCH[1]}"
+            fi
+
+            if [ -n "$port" ]; then
+                read_stats_state "$port"
+                in_total=$((${STAT_IN_TCP_TOTAL:-0} + ${STAT_IN_UDP_TOTAL:-0}))
+                out_total=$((${STAT_OUT_TCP_TOTAL:-0} + ${STAT_OUT_UDP_TOTAL:-0}))
+                total=$((in_total + out_total))
+                display_user="$user"
+                [ ${#display_user} -gt 20 ] && display_user="${display_user:0:17}..."
+                labels+=("${display_user}	порт ${port}, всего $(format_bytes "$total")")
+                users+=("$user")
+                ports+=("$port")
+            fi
+        done < "$CONFIG_FILE"
+
+        if [ ${#labels[@]} -eq 0 ]; then
+            echo -e "  ${DIM}Пользователей не найдено${NC}"
+            pause; return
+        fi
+
+        labels+=("Архив удалённых пользователей	— последние сохранённые значения")
+        labels+=("← Назад	")
+
+        arrow_menu "Пользователи" "${labels[@]}"
+
+        if [ "$ARROW_CHOICE" -lt "${#ports[@]}" ]; then
+            show_stats_detail "${users[$ARROW_CHOICE]}" "${ports[$ARROW_CHOICE]}"
+        elif [ "$ARROW_CHOICE" -eq "${#ports[@]}" ]; then
+            show_archived_stats
+        else
+            return
+        fi
     done
 }
 
